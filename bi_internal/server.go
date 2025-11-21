@@ -81,7 +81,7 @@ func HealthHandler(w http.ResponseWriter, r *http.Request) {
 
 
 func (s *Server) routes() {
-	sr := s.r.PathPrefix("/api/tokenization").Subrouter()
+	sr := s.r.PathPrefix("/api/fpt-tokenization").Subrouter()
 	sr.HandleFunc("/tokenize", s.tokenizeHandler).Methods("POST")
 	sr.HandleFunc("/detokenize", s.detokenizeHandler).Methods("POST")
 	sr.HandleFunc("/bulk-tokenize", s.bulkTokenizeHandler).Methods("POST")
