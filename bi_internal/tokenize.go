@@ -74,7 +74,7 @@ func (s *Server) tokenizeHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-
+	log.Println("API Call SuccessFul")
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(TokenizeResponse{FPT: fpt})
 
@@ -116,7 +116,7 @@ func (s *Server) Tokenize(ctx context.Context, dataType, value string) (string, 
 	}
 
 	// 3) Not found -> allocate deterministically with retries
-	const maxAttempts = 2000
+	const maxAttempts = 1000
 	for counter := 0; counter < maxAttempts; counter++ {
 		candidate, ferr := common.FPTFromBlindIndexWithCounter(blind, normalized, dataType, counter)
 		if ferr != nil {

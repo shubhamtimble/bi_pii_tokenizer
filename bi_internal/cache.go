@@ -155,6 +155,8 @@ func (c *Cache) SetByFPT(ctx context.Context, dataType, fpt string, encryptedVal
 }
 
 // PreloadFromStore streams tokens directly from DB to Redis with pipelined sets using single client.
+// This function uses context.Background() internally for long-running DB/Redis operations so it is not
+// cancelled by a short-lived request context. It returns an error on critical failures.
 func (c *Cache) PreloadFromStore(ctx context.Context, store *models.Store) error {
 	if c == nil || c.client == nil {
 		return nil
@@ -162,11 +164,21 @@ func (c *Cache) PreloadFromStore(ctx context.Context, store *models.Store) error
 
 	log.Println("cache: starting preload from store (streaming)")
 
-	const batchSize = 1000
+	// Use a Background ctx for the actual DB/Redis operations to avoid caller cancellations.
+	opCtx := context.Background()
 
-	rows, err := store.DB().QueryContext(ctx, `SELECT data_type, blind_index, fpt, encrypted_value FROM pii_tokens`)
+	const batchSize = 500 // tune: 200-2000 depending on infra
+	const throttlePause = 25 * time.Millisecond
+
+	// Optional: log total rows to provide progress context
+	var totalRows int
+	if err := store.DB().QueryRowContext(opCtx, `SELECT count(*) FROM pii_tokens`).Scan(&totalRows); err == nil {
+		log.Printf("cache preload: total rows in DB = %d", totalRows)
+	}
+
+	rows, err := store.DB().QueryContext(opCtx, `SELECT data_type, blind_index, fpt, encrypted_value FROM pii_tokens`)
 	if err != nil {
-		return err
+		return fmt.Errorf("cache preload: db query error: %w", err)
 	}
 	defer rows.Close()
 
@@ -182,32 +194,61 @@ func (c *Cache) PreloadFromStore(ctx context.Context, store *models.Store) error
 			continue
 		}
 
-		pipe.Set(ctx, blindCacheKey(dataType, blindIndex), fpt, c.ttl)
-		pipe.Set(ctx, fptCacheKey(dataType, fpt), string(encryptedValue), c.ttl)
+		// Use SetNX to avoid overwriting keys that may already exist (optional behavior).
+		// If you want unconditional overwrite, use Set instead.
+		pipe.SetNX(opCtx, blindCacheKey(dataType, blindIndex), fpt, c.ttl)
+		pipe.SetNX(opCtx, fptCacheKey(dataType, fpt), string(encryptedValue), c.ttl)
 
 		n++
 		batchCount++
 
 		if batchCount >= batchSize {
-			if _, err := pipe.Exec(ctx); err != nil {
-				log.Printf("cache preload pipeline exec error: %v", err)
+			if _, err := pipe.Exec(opCtx); err != nil {
+				return fmt.Errorf("cache preload pipeline exec error after %d items: %w", n, err)
 			}
+			// throttle to reduce impact on Redis & DB
+			time.Sleep(throttlePause)
+
 			pipe = c.client.Pipeline()
 			batchCount = 0
-			log.Printf("cache preload: processed %d entries so far", n)
+
+			if n%5000 == 0 || n < 5000 {
+				log.Printf("cache preload: processed %d/%d (approx)", n, totalRows)
+			}
 		}
 	}
 
 	if batchCount > 0 {
-		if _, err := pipe.Exec(ctx); err != nil {
-			log.Printf("cache preload final pipeline exec error: %v", err)
+		if _, err := pipe.Exec(opCtx); err != nil {
+			return fmt.Errorf("cache preload final pipeline exec error after %d items: %w", n, err)
 		}
 	}
 
 	if err := rows.Err(); err != nil {
-		log.Printf("cache preload rows iteration error: %v", err)
+		return fmt.Errorf("cache preload rows iteration error: %w", err)
 	}
 
 	log.Printf("cache: preload complete, processed %d tokens", n)
 	return nil
+}
+
+// PreloadFromStoreBackground is a convenience wrapper that runs PreloadFromStore in the background
+// (as a goroutine). It logs errors but does not block the caller. Call this from your main/server
+// startup to warm the cache without blocking readiness.
+func (c *Cache) PreloadFromStoreBackground(store *models.Store) {
+	go func() {
+		if err := c.PreloadFromStore(context.Background(), store); err != nil {
+			log.Printf("cache preload failed: %v", err)
+		} else {
+			log.Printf("cache preload finished successfully")
+		}
+	}()
+}
+
+// StartCachePreloadInBackground is a helper to call during server boot.
+// Example usage in main():
+//   cache, _ := NewCacheFromEnv()
+//   cache.StartCachePreloadInBackground(store)
+func (c *Cache) StartCachePreloadInBackground(store *models.Store) {
+	c.PreloadFromStoreBackground(store)
 }
