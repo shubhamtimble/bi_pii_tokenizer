@@ -83,84 +83,191 @@ func (s *Server) tokenizeHandler(w http.ResponseWriter, r *http.Request) {
 // Tokenize creates or returns a format-preserving token (FPT) for given PII value.
 // It is deterministic for the same PII (returns existing token if present) and
 // will try alternate deterministic candidates when there is a collision.
+
+
+
+// func (s *Server) Tokenize(ctx context.Context, dataType, value string) (string, error) {
+// 	var normalized string
+// 	if strings.ToUpper(strings.TrimSpace(dataType)) == "PAN" {
+// 		normalized = strings.ToUpper(strings.TrimSpace(value))
+// 	} else {
+// 		normalized = strings.TrimSpace(value)
+// 	}
+// 	blind := common.HMACBlindIndex(s.hmacKey, normalized)
+
+// 	// 1) Cache lookup (blind -> fpt)
+// 	if s.cache != nil {
+// 		if fpt, err := s.cache.GetByBlindIndex(ctx, dataType, blind); err == nil && fpt != "" {
+// 			log.Println("Tokenize", fpt)
+// 			return fpt, nil // cache hit
+// 		}
+// 		// on cache error fallthrough to DB
+// 	}
+
+// 	// 2) DB lookup by blind index
+// 	found, err := s.store.GetByBlindIndex(blind)
+// 	if err != nil {
+// 		return "", err
+// 	}
+// 	if found != nil {
+// 		// write-back to cache (EncryptedValue is []byte in model)
+// 		if s.cache != nil {
+// 			_ = s.cache.SetByBlindIndex(ctx, dataType, blind, found.FPT)
+// 			_ = s.cache.SetByFPT(ctx, dataType, found.FPT, found.EncryptedValue)
+// 		}
+// 		return found.FPT, nil
+// 	}
+
+// 	// 3) Not found -> allocate deterministically with retries
+// 	const maxAttempts = 5000
+// 	for counter := 0; counter < maxAttempts; counter++ {
+// 		candidate, ferr := common.FPTFromBlindIndexWithCounter(blind, normalized, dataType, counter)
+// 		if ferr != nil {
+// 			return "", ferr
+// 		}
+
+// 		existing, gerr := s.store.GetByFPT(candidate)
+// 		if gerr != nil {
+// 			return "", gerr
+// 		}
+
+// 		if existing == nil {
+// 			// encrypt returns string (base64 or b64-like). Convert to []byte only when inserting/caching.
+// 			encStr, err := common.AESGCMEncrypt(s.aesKey, []byte(normalized))
+// 			if err != nil {
+// 				return "", err
+// 			}
+// 			encBytes := []byte(encStr)
+
+// 			created, ierr := s.store.InsertToken(encBytes, blind, candidate, dataType) // InsertToken expects []byte
+// 			if ierr == nil && created != nil {
+// 				// success — write-through cache (pass []byte)
+// 				if s.cache != nil {
+// 					_ = s.cache.SetByBlindIndex(ctx, dataType, blind, candidate)
+// 					_ = s.cache.SetByFPT(ctx, dataType, candidate, encBytes)
+// 				}
+// 				return candidate, nil
+// 			}
+// 			// likely race — retry
+// 			log.Printf("insert race or error for candidate %s: %v (retrying)", candidate, ierr)
+// 			continue
+// 		}
+
+// 		// existing token found
+// 		if existing.BlindIndex == blind {
+// 			// same PII, write-back and return
+// 			if s.cache != nil {
+// 				_ = s.cache.SetByBlindIndex(ctx, dataType, blind, existing.FPT)
+// 				_ = s.cache.SetByFPT(ctx, dataType, existing.FPT, existing.EncryptedValue)
+// 			}
+// 			return existing.FPT, nil
+// 		}
+// 		// collision with different PII -> next counter
+// 		continue
+// 	}
+// 	return "", fmt.Errorf("unable to allocate unique token after %d attempts", maxAttempts)
+// }
+
+
+// in bi_internal/tokenize.go - replace the Tokenize method with this
 func (s *Server) Tokenize(ctx context.Context, dataType, value string) (string, error) {
-	var normalized string
-	if strings.ToUpper(strings.TrimSpace(dataType)) == "PAN" {
-		normalized = strings.ToUpper(strings.TrimSpace(value))
-	} else {
-		normalized = strings.TrimSpace(value)
-	}
-	blind := common.HMACBlindIndex(s.hmacKey, normalized)
+    // normalization
+    var normalized string
+    if strings.ToUpper(strings.TrimSpace(dataType)) == "PAN" {
+        normalized = strings.ToUpper(strings.TrimSpace(value))
+    } else {
+        normalized = strings.TrimSpace(value)
+    }
 
-	// 1) Cache lookup (blind -> fpt)
-	if s.cache != nil {
-		if fpt, err := s.cache.GetByBlindIndex(ctx, dataType, blind); err == nil && fpt != "" {
-			log.Println("Tokenize", fpt)
-			return fpt, nil // cache hit
-		}
-		// on cache error fallthrough to DB
-	}
+    blind := common.HMACBlindIndex(s.hmacKey, normalized)
 
-	// 2) DB lookup by blind index
-	found, err := s.store.GetByBlindIndex(blind)
-	if err != nil {
-		return "", err
-	}
-	if found != nil {
-		// write-back to cache (EncryptedValue is []byte in model)
-		if s.cache != nil {
-			_ = s.cache.SetByBlindIndex(ctx, dataType, blind, found.FPT)
-			_ = s.cache.SetByFPT(ctx, dataType, found.FPT, found.EncryptedValue)
-		}
-		return found.FPT, nil
-	}
+    // 1) try cache by blind
+    if s.cache != nil {
+        if fpt, err := s.cache.GetByBlindIndex(ctx, dataType, blind); err == nil && fpt != "" {
+            return fpt, nil
+        }
+        // on cache error fallthrough to DB
+    }
 
-	// 3) Not found -> allocate deterministically with retries
-	const maxAttempts = 1000
-	for counter := 0; counter < maxAttempts; counter++ {
-		candidate, ferr := common.FPTFromBlindIndexWithCounter(blind, normalized, dataType, counter)
-		if ferr != nil {
-			return "", ferr
-		}
+    // 2) DB lookup by blind
+    found, err := s.store.GetByBlindIndex(blind)
+    if err != nil {
+        return "", err
+    }
+    if found != nil {
+        // write-back to cache
+        if s.cache != nil {
+            _ = s.cache.SetByBlindIndex(ctx, dataType, blind, found.FPT)
+            _ = s.cache.SetByFPT(ctx, dataType, found.FPT, found.EncryptedValue)
+        }
+        return found.FPT, nil
+    }
 
-		existing, gerr := s.store.GetByFPT(candidate)
-		if gerr != nil {
-			return "", gerr
-		}
+    // 3) Not found -> generate token using active generator
+    var fpt string
+    if s.fptGen == nil {
+        return "", fmt.Errorf("fpt generator not configured on server")
+    }
 
-		if existing == nil {
-			// encrypt returns string (base64 or b64-like). Convert to []byte only when inserting/caching.
-			encStr, err := common.AESGCMEncrypt(s.aesKey, []byte(normalized))
-			if err != nil {
-				return "", err
-			}
-			encBytes := []byte(encStr)
+    var genErr error
+    if s.fptGen.Mode() == "current" {
+        // current generator expects blindHex as tweak/input
+        fpt, genErr = s.fptGen.GenerateToken(ctx, dataType, normalized, []byte(blind))
+    } else {
+        // ff1 mode: deterministic tweak using dataType + keyVersion
+        tweak := []byte(fmt.Sprintf("%s:%s", strings.ToUpper(dataType), s.fpeKeyVersion))
+        fpt, genErr = s.fptGen.GenerateToken(ctx, dataType, normalized, tweak)
+    }
+    if genErr != nil {
+        return "", genErr
+    }
 
-			created, ierr := s.store.InsertToken(encBytes, blind, candidate, dataType) // InsertToken expects []byte
-			if ierr == nil && created != nil {
-				// success — write-through cache (pass []byte)
-				if s.cache != nil {
-					_ = s.cache.SetByBlindIndex(ctx, dataType, blind, candidate)
-					_ = s.cache.SetByFPT(ctx, dataType, candidate, encBytes)
-				}
-				return candidate, nil
-			}
-			// likely race — retry
-			log.Printf("insert race or error for candidate %s: %v (retrying)", candidate, ierr)
-			continue
-		}
+    // 4) Encrypt plaintext and attempt to insert (use existing InsertToken signature with 4 args)
+    encStr, err := common.AESGCMEncrypt(s.aesKey, []byte(normalized))
+    if err != nil {
+        return "", err
+    }
+    encBytes := []byte(encStr)
 
-		// existing token found
-		if existing.BlindIndex == blind {
-			// same PII, write-back and return
-			if s.cache != nil {
-				_ = s.cache.SetByBlindIndex(ctx, dataType, blind, existing.FPT)
-				_ = s.cache.SetByFPT(ctx, dataType, existing.FPT, existing.EncryptedValue)
-			}
-			return existing.FPT, nil
-		}
-		// collision with different PII -> next counter
-		continue
-	}
-	return "", fmt.Errorf("unable to allocate unique token after %d attempts", maxAttempts)
+    // Attempt insert. Your existing InsertToken signature: InsertToken(encBytes, blind, fpt, dataType)
+    created, ierr := s.store.InsertToken(encBytes, blind, fpt, dataType)
+    if ierr == nil && created != nil {
+        // success — write-through cache if present
+        if s.cache != nil {
+            _ = s.cache.SetByBlindIndex(ctx, dataType, blind, fpt)
+            _ = s.cache.SetByFPT(ctx, dataType, fpt, encBytes)
+        }
+        return fpt, nil
+    }
+
+    // Handle possible race or unique constraint violation:
+    //  - someone else may have inserted the same fpt or the same blind
+    //  - fetch by blind or by fpt to resolve
+    if ierr != nil {
+        // try to fetch by FPT (maybe inserted by another concurrent request)
+        existing, gerr := s.store.GetByFPT(fpt)
+        if gerr == nil && existing != nil {
+            // Write to cache and return existing token
+            if s.cache != nil {
+                _ = s.cache.SetByBlindIndex(ctx, dataType, blind, existing.FPT)
+                _ = s.cache.SetByFPT(ctx, dataType, existing.FPT, existing.EncryptedValue)
+            }
+            return existing.FPT, nil
+        }
+        // if existing is nil, attempt to SELECT by blind again (someone else inserted)
+        existingByBlind, berr := s.store.GetByBlindIndex(blind)
+        if berr == nil && existingByBlind != nil {
+            if s.cache != nil {
+                _ = s.cache.SetByBlindIndex(ctx, dataType, blind, existingByBlind.FPT)
+                _ = s.cache.SetByFPT(ctx, dataType, existingByBlind.FPT, existingByBlind.EncryptedValue)
+            }
+            return existingByBlind.FPT, nil
+        }
+        // fallback: return the insert error (unknown reason)
+        return "", ierr
+    }
+
+    // This should be unreachable because we returned on success or handled errors above.
+    return "", fmt.Errorf("failed to allocate token")
 }
+

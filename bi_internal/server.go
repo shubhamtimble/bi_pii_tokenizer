@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"time"
+	"os"
 
 	"github.com/gorilla/mux"
 
@@ -22,6 +23,8 @@ type Server struct {
 	store   *models.Store
 	aesKey  []byte
 	hmacKey []byte
+	fptGen        common.FPTGenerator
+    fpeKeyVersion string
 	r       *mux.Router
 	cache   *Cache
 }
@@ -41,10 +44,18 @@ func NewServer(store *models.Store) *Server {
 		panic("invalid HMAC key: " + err.Error())
 	}
 
+	fptGen, err := common.NewFPTGeneratorFromEnv()
+	if err != nil {
+		log.Fatalf("failed to build FPT generator: %v", err)
+	}
+	fpeKeyVersion := os.Getenv("FPE_KEY_VERSION")
+
 	s := &Server{
 		store:   store,
 		aesKey:  aesKey,
 		hmacKey: hmacKey,
+		fptGen:       fptGen,
+        fpeKeyVersion: fpeKeyVersion,
 		r:       mux.NewRouter(),
 		cache:   nil,
 	}
