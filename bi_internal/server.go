@@ -85,6 +85,9 @@ func (s *Server) routes() {
 	sr.HandleFunc("/tokenize", s.tokenizeHandler).Methods("POST")
 	sr.HandleFunc("/detokenize", s.detokenizeHandler).Methods("POST")
 	sr.HandleFunc("/bulk-tokenize", s.bulkTokenizeHandler).Methods("POST")
+	sr.HandleFunc("/v2/tokenize", s.HandleTokenizeV2).Methods("POST")
+    sr.HandleFunc("/v2/detokenize", s.HandleDetokenizeV2).Methods("POST")
+
 	// health
 	sr.HandleFunc("/health", HealthHandler).Methods(http.MethodGet)
 }

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	
 
 	"bi_pii_tokenizer/common"
 )
@@ -83,6 +84,9 @@ func (s *Server) tokenizeHandler(w http.ResponseWriter, r *http.Request) {
 // Tokenize creates or returns a format-preserving token (FPT) for given PII value.
 // It is deterministic for the same PII (returns existing token if present) and
 // will try alternate deterministic candidates when there is a collision.
+
+
+
 func (s *Server) Tokenize(ctx context.Context, dataType, value string) (string, error) {
 	var normalized string
 	if strings.ToUpper(strings.TrimSpace(dataType)) == "PAN" {
@@ -116,7 +120,7 @@ func (s *Server) Tokenize(ctx context.Context, dataType, value string) (string, 
 	}
 
 	// 3) Not found -> allocate deterministically with retries
-	const maxAttempts = 1000
+	const maxAttempts = 5000
 	for counter := 0; counter < maxAttempts; counter++ {
 		candidate, ferr := common.FPTFromBlindIndexWithCounter(blind, normalized, dataType, counter)
 		if ferr != nil {
@@ -164,3 +168,4 @@ func (s *Server) Tokenize(ctx context.Context, dataType, value string) (string, 
 	}
 	return "", fmt.Errorf("unable to allocate unique token after %d attempts", maxAttempts)
 }
+
