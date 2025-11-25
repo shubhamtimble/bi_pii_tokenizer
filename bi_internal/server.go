@@ -6,6 +6,8 @@ import (
 	"log"
 	"net/http"
 	"time"
+	"os"
+    "strings"
 
 	"github.com/gorilla/mux"
 
@@ -24,6 +26,8 @@ type Server struct {
 	hmacKey []byte
 	r       *mux.Router
 	cache   *Cache
+	fptGen       *common.FF1Generator
+    fpeKeyVersion string
 }
 
 // NewServer creates a server and initializes keys + redis cluster cache.
@@ -47,6 +51,8 @@ func NewServer(store *models.Store) *Server {
 		hmacKey: hmacKey,
 		r:       mux.NewRouter(),
 		cache:   nil,
+		fptGen:  nil,
+        fpeKeyVersion: "",
 	}
 
 	// init redis cluster cache
@@ -64,6 +70,30 @@ func NewServer(store *models.Store) *Server {
 			log.Println("cache preload completed")
 		}
 	}
+
+	if strings.ToLower(os.Getenv("FPT_MODE")) == "ff1" || os.Getenv("FPE_KEY_BASE64") != "" {
+		fpeB64 := os.Getenv("FPE_KEY_BASE64")
+		if fpeB64 != "" {
+			keyBytes, kerr := common.DecodeBase64Key(fpeB64)
+			if kerr != nil {
+				log.Fatalf("invalid FPE key: %v", kerr)
+			}
+			keyVer := os.Getenv("FPE_KEY_VERSION")
+			if keyVer == "" {
+				keyVer = "v1"
+			}
+			fg, ferr := common.NewFF1Generator(keyBytes, keyVer)
+			if ferr != nil {
+				log.Fatalf("failed to init FF1 generator: %v", ferr)
+			}
+			s.fptGen = fg
+			s.fpeKeyVersion = keyVer
+			log.Println("FF1 generator initialized for v3 tokenization (keyVersion=" + keyVer + ")")
+		} else {
+			log.Println("FPT_MODE=ff1 but FPE_KEY_BASE64 not set; ff1 disabled")
+		}
+	}
+
 
 	s.routes()
 	return s
@@ -85,6 +115,10 @@ func (s *Server) routes() {
 	sr.HandleFunc("/tokenize", s.tokenizeHandler).Methods("POST")
 	sr.HandleFunc("/detokenize", s.detokenizeHandler).Methods("POST")
 	sr.HandleFunc("/bulk-tokenize", s.bulkTokenizeHandler).Methods("POST")
+
+	sr.HandleFunc("/v3/tokenize", s.tokenizeV3Handler).Methods("POST")
+    sr.HandleFunc("/v3/detokenize", s.detokenizeV3Handler).Methods("POST")
+
 	// health
 	sr.HandleFunc("/health", HealthHandler).Methods(http.MethodGet)
 }
