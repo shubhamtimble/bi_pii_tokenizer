@@ -41,6 +41,20 @@ func isValidAADHAR(aadhar string) bool {
     return re.MatchString(aadhar)
 }
 
+func isValidPhone(phone string) bool {
+	// Expect 10 digits
+	// User said "phone number should support indian phone numbers should give 10 digit Token"
+	// Typical Indian mobile number is 10 digits.
+	re := regexp.MustCompile(`^[0-9]{10}$`)
+	return re.MatchString(phone)
+}
+
+func isValidEmail(email string) bool {
+	// Simple email regex for validation
+	re := regexp.MustCompile(`^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$`)
+	return re.MatchString(email)
+}
+
 func (s *Server) tokenizeHandler(w http.ResponseWriter, r *http.Request) {
 	var req TokenizeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -64,6 +78,20 @@ func (s *Server) tokenizeHandler(w http.ResponseWriter, r *http.Request) {
 	if req.PIIType == "AADHAR" {
 		if !isValidAADHAR(req.PIIValue) {
 			writeJSONError(w, http.StatusBadRequest, "Invalid AADHAR format")
+			return
+		}
+	}
+
+	if req.PIIType == "PHONE" {
+		if !isValidPhone(req.PIIValue) {
+			writeJSONError(w, http.StatusBadRequest, "Invalid PHONE format (must be 10 digits)")
+			return
+		}
+	}
+
+	if req.PIIType == "EMAIL" {
+		if !isValidEmail(req.PIIValue) {
+			writeJSONError(w, http.StatusBadRequest, "Invalid EMAIL format")
 			return
 		}
 	}

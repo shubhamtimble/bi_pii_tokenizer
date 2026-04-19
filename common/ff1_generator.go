@@ -8,7 +8,6 @@ import (
 
 	ff1lib "github.com/capitalone/fpe/ff1"
 )
-
 /*
 FF1Generator (string-API)
 - Uses ff1.Cipher.EncryptWithTweak(plaintext string, tweak []byte) (string, error)
@@ -37,7 +36,7 @@ func NewFF1Generator(key []byte, keyVersion string) (*FF1Generator, error) {
 		key:        key,
 		keyVersion: keyVersion,
 		maxTLen:    64,
-		alphabet:   "0123456789abcdefghijklmnopqrstuvwxyz",
+		alphabet:   "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.+",
 	}, nil
 }
 
@@ -75,6 +74,67 @@ func mustDigits(s string, expected int) (string, error) {
 		out[i] = c
 	}
 	return string(out), nil
+}
+
+// Map custom valid email characters to indices in alphabet and back.
+// Alphabet: 0-9 (10), a-z (26), A-Z (26), .,-,_,+ (4) = 66 chars
+// We use a custom radix 40 for Email: 0-9, a-z, ., -, _, +
+//  0-9 -> 0-9
+//  a-z -> 10-35
+//  .   -> 36
+//  -   -> 37
+//  _   -> 38
+//  +   -> 39
+// Note: Uppercase letters will be normalized to lowercase before tokenization.
+func (g *FF1Generator) encodeEmailCharsToValues(s string) ([]int, error) {
+	out := make([]int, len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		var v int
+		switch {
+		case c >= '0' && c <= '9':
+			v = int(c - '0')
+		case c >= 'a' && c <= 'z':
+			v = int(c - 'a') + 10
+		case c == '.':
+			v = 36
+		case c == '-':
+			v = 37
+		case c == '_':
+			v = 38
+		case c == '+':
+			v = 39
+		default:
+			return nil, fmt.Errorf("invalid email char for FPT: %c", c)
+		}
+		out[i] = v
+	}
+	return out, nil
+}
+
+func (g *FF1Generator) decodeValuesToEmailChars(vals []int) (string, error) {
+	var sb strings.Builder
+	for _, v := range vals {
+		var c byte
+		switch {
+		case v >= 0 && v <= 9:
+			c = byte('0' + v)
+		case v >= 10 && v <= 35:
+			c = byte('a' + (v - 10))
+		case v == 36:
+			c = '.'
+		case v == 37:
+			c = '-'
+		case v == 38:
+			c = '_'
+		case v == 39:
+			c = '+'
+		default:
+			return "", fmt.Errorf("decoded value out of range for email: %d", v)
+		}
+		sb.WriteByte(c)
+	}
+	return sb.String(), nil
 }
 
 // encodeValuesToAlphabet builds plaintext string for given values [0..radix-1]
@@ -251,6 +311,103 @@ func (g *FF1Generator) GenerateToken(ctx context.Context, dataType, normalized s
 			out[i] = byte('0' + v)
 		}
 		return string(out), nil
+
+	case "PHONE":
+		// Expect 10 digits
+		if len(normalized) != 10 {
+			return "", fmt.Errorf("PHONE must be 10 digits")
+		}
+		// Validate digits
+		_, err := mustDigits(normalized, 10)
+		if err != nil {
+			return "", err
+		}
+		// Treat as single block radix 10
+		// 1. values
+		vals := make([]int, 10)
+		for i := 0; i < 10; i++ {
+			vals[i] = int(normalized[i] - '0')
+		}
+		// 2. encode
+		plainStr, err := g.encodeValuesToAlphabet(vals, 10)
+		if err != nil {
+			return "", fmt.Errorf("encode phone: %w", err)
+		}
+		// 3. encrypt
+		ctStr, err := g.encryptStringWithTweak(10, plainStr, tweak)
+		if err != nil {
+			return "", fmt.Errorf("ff1 encrypt phone: %w", err)
+		}
+		// 4. decode
+		outVals, err := g.decodeAlphabetToValues(ctStr, 10)
+		if err != nil {
+			return "", fmt.Errorf("decode phone cipher output: %w", err)
+		}
+		// 5. stringify
+		out := make([]byte, 10)
+		for i, v := range outVals {
+			out[i] = byte('0' + v)
+		}
+		return string(out), nil
+
+	case "EMAIL":
+		// Strategy: LocalPart @ Domain
+		// Split
+		parts := strings.Split(normalized, "@")
+		if len(parts) != 2 {
+			return "", fmt.Errorf("invalid email format")
+		}
+		local := parts[0]
+		domain := parts[1]
+		if local == "" || domain == "" {
+			return "", fmt.Errorf("empty email parts")
+		}
+
+		// Encrypt Local Part (Radix 40)
+		localVals, err := g.encodeEmailCharsToValues(local)
+		if err != nil {
+			return "", err
+		}
+		localPlain, err := g.encodeValuesToAlphabet(localVals, 40)
+		if err != nil {
+			return "", err
+		}
+		localCipher, err := g.encryptStringWithTweak(40, localPlain, tweak)
+		if err != nil {
+			return "", fmt.Errorf("ff1 encrypt email local: %w", err)
+		}
+		localOutVals, err := g.decodeAlphabetToValues(localCipher, 40)
+		if err != nil {
+			return "", err
+		}
+		localOut, err := g.decodeValuesToEmailChars(localOutVals)
+		if err != nil {
+			return "", err
+		}
+
+		// Encrypt Domain Part (Radix 40)
+		domainVals, err := g.encodeEmailCharsToValues(domain)
+		if err != nil {
+			return "", err
+		}
+		domainPlain, err := g.encodeValuesToAlphabet(domainVals, 40)
+		if err != nil {
+			return "", err
+		}
+		domainCipher, err := g.encryptStringWithTweak(40, domainPlain, tweak) // Re-use tweak? Ideally should differentiate but Tweak logic is simpler here
+		if err != nil {
+			return "", fmt.Errorf("ff1 encrypt email domain: %w", err)
+		}
+		domainOutVals, err := g.decodeAlphabetToValues(domainCipher, 40)
+		if err != nil {
+			return "", err
+		}
+		domainOut, err := g.decodeValuesToEmailChars(domainOutVals)
+		if err != nil {
+			return "", err
+		}
+
+		return localOut + "@" + domainOut, nil
 
 	default:
 		// fallback deterministic mapping (non-crypto)

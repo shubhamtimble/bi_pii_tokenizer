@@ -57,6 +57,18 @@ func (s *Server) tokenizeV3Handler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if req.PIIType == "PHONE" {
+		if !isValidPhone(req.PIIValue) {
+			writeJSONError(w, http.StatusBadRequest, "invalid PHONE format")
+			return
+		}
+	}
+	if req.PIIType == "EMAIL" {
+		if !isValidEmail(req.PIIValue) {
+			writeJSONError(w, http.StatusBadRequest, "invalid EMAIL format")
+			return
+		}
+	}
 
 	fpt, err := s.TokenizeV3(r.Context(), req.PIIType, req.PIIValue)
 	if err != nil {
@@ -75,6 +87,11 @@ func (s *Server) TokenizeV3(ctx context.Context, dataType, value string) (string
 	var normalized string
 	if strings.ToUpper(strings.TrimSpace(dataType)) == "PAN" {
 		normalized = strings.ToUpper(strings.TrimSpace(value))
+	} else if strings.ToUpper(strings.TrimSpace(dataType)) == "EMAIL" {
+		normalized = strings.ToLower(strings.TrimSpace(value))
+	} else if strings.ToUpper(strings.TrimSpace(dataType)) == "PHONE" {
+		// Just trim. Verification ensures it's 10 digits
+		normalized = strings.TrimSpace(value)
 	} else {
 		normalized = strings.TrimSpace(value)
 	}
