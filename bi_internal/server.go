@@ -1,10 +1,11 @@
 package bi_internal
 
 import (
-	"encoding/json"
 	"context"
+	"encoding/json"
 	"log"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -24,6 +25,8 @@ type Server struct {
 	hmacKey []byte
 	r       *mux.Router
 	cache   *Cache
+	ff1Gen  *common.FF1GeneratorV4
+	audit   *AuditLogger
 }
 
 // NewServer creates a server and initializes keys + redis cluster cache.
@@ -48,6 +51,29 @@ func NewServer(store *models.Store) *Server {
 		r:       mux.NewRouter(),
 		cache:   nil,
 	}
+
+	// v4: optional FF1 generator. If FPE_KEY_BASE64 is absent the /v4/*
+	// endpoints return 503; legacy endpoints are unaffected.
+	if fpeB64 := os.Getenv("FPE_KEY_BASE64"); fpeB64 != "" {
+		keyBytes, kerr := common.DecodeBase64Key(fpeB64)
+		if kerr != nil {
+			log.Fatalf("invalid FPE_KEY_BASE64: %v", kerr)
+		}
+		keyVer := os.Getenv("FPE_KEY_VERSION")
+		if keyVer == "" {
+			keyVer = "v1"
+		}
+		gen, gerr := common.NewFF1GeneratorV4(keyBytes, keyVer)
+		if gerr != nil {
+			log.Fatalf("init FF1 v4: %v", gerr)
+		}
+		s.ff1Gen = gen
+		log.Printf("v4 FF1 generator ready (keyVersion=%s)", keyVer)
+	} else {
+		log.Println("v4 FF1 generator disabled (FPE_KEY_BASE64 not set)")
+	}
+
+	s.audit = NewAuditLoggerFromEnv(store.DB())
 
 	// init redis cluster cache
 	cache, cerr := NewCacheFromEnv()
@@ -85,6 +111,8 @@ func (s *Server) routes() {
 	sr.HandleFunc("/tokenize", s.tokenizeHandler).Methods("POST")
 	sr.HandleFunc("/detokenize", s.detokenizeHandler).Methods("POST")
 	sr.HandleFunc("/bulk-tokenize", s.bulkTokenizeHandler).Methods("POST")
+	sr.HandleFunc("/v4/tokenize", s.tokenizeV4Handler).Methods("POST")
+	sr.HandleFunc("/v4/detokenize", s.detokenizeV4Handler).Methods("POST")
 	// health
 	sr.HandleFunc("/health", HealthHandler).Methods(http.MethodGet)
 }

@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"bi_pii_tokenizer/common"
 )
@@ -20,26 +21,34 @@ type DetokenizeResponse struct {
 }
 
 func (s *Server) detokenizeHandler(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	ev := AuditEvent{Action: "detokenize", Version: "v1", RemoteIP: clientIP(r)}
+
 	var req DetokenizeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSONError(w, http.StatusBadRequest, "Invalid Body Keep Token with Fpt key")
+		s.auditFail(ev, start, http.StatusBadRequest, "Invalid Body Keep Token with Fpt key", w)
 		return
 	}
 	req.FPT = strings.TrimSpace(req.FPT)
 	if req.FPT == "" {
-		writeJSONError(w, http.StatusBadRequest, "fpt required")
+		s.auditFail(ev, start, http.StatusBadRequest, "fpt required", w)
 		return
 	}
+	ev.FPT = req.FPT
 	val, err := s.Detokenize(r.Context(), req.FPT)
 	if err != nil {
 		if err == ErrTokenNotFound {
-			writeJSONError(w, http.StatusNotFound, "token not found")
+			s.auditFail(ev, start, http.StatusNotFound, "token not found", w)
 			return
 		}
 		log.Printf("detokenize error: %v", err)
-		writeJSONError(w, http.StatusInternalServerError, "internal error")
+		s.auditFail(ev, start, http.StatusInternalServerError, "internal error", w)
 		return
 	}
+	ev.Status = "success"
+	ev.LatencyMS = time.Since(start).Milliseconds()
+	s.audit.Log(ev)
+
 	json.NewEncoder(w).Encode(DetokenizeResponse{PIIValue: val})
 }
 

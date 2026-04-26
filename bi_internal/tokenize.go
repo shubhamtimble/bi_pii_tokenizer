@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
 
 	"bi_pii_tokenizer/common"
 )
@@ -41,29 +42,89 @@ func isValidAADHAR(aadhar string) bool {
     return re.MatchString(aadhar)
 }
 
+var (
+    rePhone10Legacy  = regexp.MustCompile(`^[6-9][0-9]{9}$`)
+    reEmailLegacy    = regexp.MustCompile(`^[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}$`)
+    rePassportLegacy = regexp.MustCompile(`^[A-Z][0-9]{7}$`)
+    reNonDigitLegacy = regexp.MustCompile(`[^0-9]`)
+)
+
+func normalizeLegacyPhone(raw string) string {
+    v := strings.TrimSpace(raw)
+    v = strings.TrimPrefix(v, "+91")
+    return reNonDigitLegacy.ReplaceAllString(v, "")
+}
+
+func isValidPhone(raw string) bool {
+    return rePhone10Legacy.MatchString(normalizeLegacyPhone(raw))
+}
+
+func isValidEmail(raw string) bool {
+    return reEmailLegacy.MatchString(strings.ToLower(strings.TrimSpace(raw)))
+}
+
+func isValidPassport(raw string) bool {
+    return rePassportLegacy.MatchString(strings.ToUpper(strings.TrimSpace(raw)))
+}
+
 func (s *Server) tokenizeHandler(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	ev := AuditEvent{Action: "tokenize", Version: "v1", RemoteIP: clientIP(r)}
+
 	var req TokenizeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSONError(w, http.StatusBadRequest, "Invalid Body Keep PII Type and PII Value")
+		s.auditFail(ev, start, http.StatusBadRequest, "Invalid Body Keep PII Type and PII Value", w)
 		return
 	}
 	req.PIIType = strings.ToUpper(strings.TrimSpace(req.PIIType))
 	req.PIIValue = strings.TrimSpace(req.PIIValue)
+	ev.PIIType = req.PIIType
 	if req.PIIType == "" || req.PIIValue == "" {
-		writeJSONError(w, http.StatusBadRequest, "pii_type and pii_value are required")
+		s.auditFail(ev, start, http.StatusBadRequest, "pii_type and pii_value are required", w)
+		return
+	}
+
+	// whitelist of legacy-supported PII types — reject unknowns before any
+	// generation logic so a typo'd or malicious pii_type can't slip into the
+	// default base36 fallback path.
+	switch req.PIIType {
+	case "PAN", "AADHAR", "PHONE", "MOBILE", "EMAIL", "PASSPORT":
+	default:
+		s.auditFail(ev, start, http.StatusBadRequest, "Invalid PII Type", w)
 		return
 	}
 
 	if req.PIIType == "PAN" {
 		if !isValidPAN(req.PIIValue) {
-			writeJSONError(w, http.StatusBadRequest, "Invalid PAN format")
+			s.auditFail(ev, start, http.StatusBadRequest, fmt.Sprintf("Invalid %s Format", req.PIIType), w)
 			return
 		}
 	}
 
 	if req.PIIType == "AADHAR" {
 		if !isValidAADHAR(req.PIIValue) {
-			writeJSONError(w, http.StatusBadRequest, "Invalid AADHAR format")
+			s.auditFail(ev, start, http.StatusBadRequest, fmt.Sprintf("Invalid %s Format", req.PIIType), w)
+			return
+		}
+	}
+
+	if req.PIIType == "PHONE" || req.PIIType == "MOBILE" {
+		if !isValidPhone(req.PIIValue) {
+			s.auditFail(ev, start, http.StatusBadRequest, fmt.Sprintf("Invalid %s Format", req.PIIType), w)
+			return
+		}
+	}
+
+	if req.PIIType == "EMAIL" {
+		if !isValidEmail(req.PIIValue) {
+			s.auditFail(ev, start, http.StatusBadRequest, fmt.Sprintf("Invalid %s Format", req.PIIType), w)
+			return
+		}
+	}
+
+	if req.PIIType == "PASSPORT" {
+		if !isValidPassport(req.PIIValue) {
+			s.auditFail(ev, start, http.StatusBadRequest, fmt.Sprintf("Invalid %s Format", req.PIIType), w)
 			return
 		}
 	}
@@ -71,9 +132,14 @@ func (s *Server) tokenizeHandler(w http.ResponseWriter, r *http.Request) {
 	fpt, err := s.Tokenize(r.Context(), req.PIIType, req.PIIValue)
 	if err != nil {
 		log.Printf("tokenize error: %v", err)
-		writeJSONError(w, http.StatusInternalServerError, "internal error")
+		s.auditFail(ev, start, http.StatusInternalServerError, "internal error", w)
 		return
 	}
+	ev.FPT = fpt
+	ev.Status = "success"
+	ev.LatencyMS = time.Since(start).Milliseconds()
+	s.audit.Log(ev)
+
 	log.Println("API Call SuccessFul")
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(TokenizeResponse{FPT: fpt})
@@ -85,9 +151,16 @@ func (s *Server) tokenizeHandler(w http.ResponseWriter, r *http.Request) {
 // will try alternate deterministic candidates when there is a collision.
 func (s *Server) Tokenize(ctx context.Context, dataType, value string) (string, error) {
 	var normalized string
-	if strings.ToUpper(strings.TrimSpace(dataType)) == "PAN" {
+	switch strings.ToUpper(strings.TrimSpace(dataType)) {
+	case "PAN":
 		normalized = strings.ToUpper(strings.TrimSpace(value))
-	} else {
+	case "EMAIL":
+		normalized = strings.ToLower(strings.TrimSpace(value))
+	case "PASSPORT":
+		normalized = strings.ToUpper(strings.TrimSpace(value))
+	case "PHONE", "MOBILE":
+		normalized = normalizeLegacyPhone(value)
+	default:
 		normalized = strings.TrimSpace(value)
 	}
 	blind := common.HMACBlindIndex(s.hmacKey, normalized)

@@ -99,6 +99,48 @@ func fptCacheKey(dataType, fpt string) string {
 	return fmt.Sprintf("pii:v1:%s:fpt:%s", dataType, fpt)
 }
 
+// v4 cache keys are data-type-agnostic so detokenize can read without first
+// having to learn the PII type. The value at v4FptCacheKey is the base64
+// AES-GCM envelope as bytes; the value at v4BlindCacheKey is the FPT.
+func v4BlindCacheKey(blindIndex string) string {
+	return fmt.Sprintf("pii:v4:blind:%s", blindIndex)
+}
+func v4FptCacheKey(fpt string) string {
+	return fmt.Sprintf("pii:v4:fpt:%s", fpt)
+}
+
+// GetV4ByBlindIndex returns the FPT stored for a blind index, or "" on miss.
+func (c *Cache) GetV4ByBlindIndex(ctx context.Context, blindIndex string) (string, error) {
+	if c == nil || c.client == nil {
+		return "", nil
+	}
+	return c.get(ctx, v4BlindCacheKey(blindIndex))
+}
+
+// SetV4ByBlindIndex stores blind -> fpt.
+func (c *Cache) SetV4ByBlindIndex(ctx context.Context, blindIndex, fpt string) error {
+	if c == nil || c.client == nil {
+		return nil
+	}
+	return c.set(ctx, v4BlindCacheKey(blindIndex), fpt)
+}
+
+// GetV4ByFPT returns the encrypted envelope bytes (as string) or "" on miss.
+func (c *Cache) GetV4ByFPT(ctx context.Context, fpt string) (string, error) {
+	if c == nil || c.client == nil {
+		return "", nil
+	}
+	return c.get(ctx, v4FptCacheKey(fpt))
+}
+
+// SetV4ByFPT stores fpt -> encryptedValue.
+func (c *Cache) SetV4ByFPT(ctx context.Context, fpt string, encryptedValue []byte) error {
+	if c == nil || c.client == nil {
+		return nil
+	}
+	return c.set(ctx, v4FptCacheKey(fpt), string(encryptedValue))
+}
+
 // internal helpers
 func (c *Cache) get(ctx context.Context, key string) (string, error) {
 	if c == nil || c.client == nil {

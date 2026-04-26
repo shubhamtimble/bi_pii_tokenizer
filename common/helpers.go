@@ -115,7 +115,15 @@ func FPTFromBlindIndexWithCounter(blindHex, original, dataType string, counter i
 	case "PAN":
 		return fptPANFromBlind(blindHex, counter)
 	case "AADHAR":
-		return fptDigitsFromBlind(blindHex, len(original), counter)
+		// first digit forced to 1-9 so the token never starts with '0'
+		return fptDigitsWithFirstRange(blindHex, len(original), '1', '9', counter)
+	case "PHONE", "MOBILE":
+		// Indian mobile: 10 digits, first 6-9
+		return fptDigitsWithFirstRange(blindHex, 10, '6', '9', counter)
+	case "PASSPORT":
+		return fptPassportFromBlind(blindHex, counter)
+	case "EMAIL":
+		return fptEmailFromBlind(blindHex, original, counter)
 	default:
 		return deterministicBase36FromHexWithCounter(blindHex, len(original), counter)
 	}
@@ -156,6 +164,95 @@ func fptDigitsFromBlind(blindHex string, length, counter int) (string, error) {
 	out := make([]byte, length)
 	for i := 0; i < length; i++ {
 		out[i] = byte('0' + (result[i] % 10))
+	}
+	return string(out), nil
+}
+
+// fptDigitsWithFirstRange generates `length` digits deterministically from the
+// blind index and counter. The first digit is chosen from [firstMin, firstMax]
+// inclusive (both ASCII bytes in '0'..'9'). Remaining digits are 0-9.
+// Used for AADHAR (first 1-9) and Indian mobile (first 6-9).
+func fptDigitsWithFirstRange(blindHex string, length int, firstMin, firstMax byte, counter int) (string, error) {
+	if length <= 0 {
+		return "", errors.New("invalid length for digits fpt")
+	}
+	if firstMin < '0' || firstMax > '9' || firstMin > firstMax {
+		return "", errors.New("invalid first-digit range")
+	}
+	firstSpan := int(firstMax-firstMin) + 1
+
+	result := make([]byte, 0, length)
+	round := 0
+	for len(result) < length {
+		src := sha256.Sum256([]byte(blindHex + ":" + fmt.Sprint(counter) + ":" + fmt.Sprint(round)))
+		result = append(result, src[:]...)
+		round++
+	}
+	out := make([]byte, length)
+	out[0] = firstMin + byte(int(result[0])%firstSpan)
+	for i := 1; i < length; i++ {
+		out[i] = byte('0' + (result[i] % 10))
+	}
+	return string(out), nil
+}
+
+// fptPassportFromBlind produces a deterministic Indian-passport-shaped token:
+// 1 uppercase letter followed by 7 digits.
+func fptPassportFromBlind(blindHex string, counter int) (string, error) {
+	src := sha256.Sum256([]byte(blindHex + ":" + fmt.Sprint(counter)))
+	out := make([]byte, 8)
+	out[0] = byte('A' + (src[0] % 26))
+	for i := 1; i < 8; i++ {
+		out[i] = byte('0' + (src[i] % 10))
+	}
+	return string(out), nil
+}
+
+// fptEmailFromBlind tokenizes both the local part AND each domain label of an
+// email, preserving only the structural separators ('@' and '.') along with
+// the in-label punctuation valid in each position ('_', '%', '+', '-' in the
+// local part; '-' in domain labels). This stronger form removes the residual
+// re-identification risk of leaking the domain (DPDPA-aware), at the cost of
+// the token no longer being routable to the original MX.
+//
+// Implementation: one linear pass over the normalized email. For every
+// alphanumeric position we substitute a vault-derived char from `a-z 0-9`;
+// every other character (`@`, `.`, `_`, `%`, `+`, `-`) passes through
+// verbatim. This automatically handles any number of domain labels.
+func fptEmailFromBlind(blindHex string, normalized string, counter int) (string, error) {
+	at := strings.LastIndexByte(normalized, '@')
+	if at < 1 || at == len(normalized)-1 {
+		return "", errors.New("invalid email format")
+	}
+
+	// Enough hash bytes to cover every position (worst case all alphanum).
+	result := make([]byte, 0, len(normalized))
+	round := 0
+	for len(result) < len(normalized) {
+		src := sha256.Sum256([]byte(blindHex + ":" + fmt.Sprint(counter) + ":" + fmt.Sprint(round)))
+		result = append(result, src[:]...)
+		round++
+	}
+
+	const alnum = "abcdefghijklmnopqrstuvwxyz0123456789"
+	const alnumNoZero = "abcdefghijklmnopqrstuvwxyz123456789" // 35 chars, no '0'
+	out := make([]byte, len(normalized))
+	for i := 0; i < len(normalized); i++ {
+		c := normalized[i]
+		switch {
+		case (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'):
+			// Position 0 of the email must never be '0' — exclude it from
+			// the substitution alphabet. (Other positions can freely produce
+			// any alnum character.)
+			if i == 0 {
+				out[i] = alnumNoZero[int(result[i])%35]
+			} else {
+				out[i] = alnum[int(result[i])%36]
+			}
+		default:
+			// preserve '@', '.', '_', '%', '+', '-'
+			out[i] = c
+		}
 	}
 	return string(out), nil
 }
