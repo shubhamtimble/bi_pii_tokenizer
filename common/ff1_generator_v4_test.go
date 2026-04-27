@@ -166,6 +166,25 @@ func TestFF1_DL_FormatPreserved(t *testing.T) {
 	}
 }
 
+func TestFF1_VoterID_FormatPreserved(t *testing.T) {
+	g := newTestGen(t)
+	tw := mustTweak(t)
+	voterRE := regexp.MustCompile(`^[A-Z]{3}[0-9]{7}$`)
+
+	ct, err := g.TokenizeVoterID("ABC1234567", tw)
+	if err != nil {
+		t.Fatalf("TokenizeVoterID: %v", err)
+	}
+	if !voterRE.MatchString(ct) {
+		t.Fatalf("VOTERID ciphertext %q violates 3L7D format", ct)
+	}
+	// deterministic for same input + tweak
+	ct2, _ := g.TokenizeVoterID("ABC1234567", tw)
+	if ct != ct2 {
+		t.Fatalf("VOTERID not deterministic: %q vs %q", ct, ct2)
+	}
+}
+
 func TestFF1_DifferentInputs_DifferentOutputs(t *testing.T) {
 	g := newTestGen(t)
 	tw := mustTweak(t)

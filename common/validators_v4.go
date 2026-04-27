@@ -15,6 +15,7 @@ const (
 	PIITypeEmail    = "EMAIL"
 	PIITypeDL       = "DL"
 	PIITypePassport = "PASSPORT"
+	PIITypeVoterID  = "VOTERID" // Indian EPIC: 3 letters + 7 digits
 )
 
 var (
@@ -24,6 +25,7 @@ var (
 	reV4Email    = regexp.MustCompile(`^[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}$`)
 	reV4DL       = regexp.MustCompile(`^[A-Z0-9]{5,20}$`)
 	reV4Passport = regexp.MustCompile(`^[A-Z][0-9]{7}$`)
+	reV4VoterID  = regexp.MustCompile(`^[A-Z]{3}[0-9]{7}$`)
 
 	reV4NonDigit = regexp.MustCompile(`[^0-9]`)
 	reV4DLClean  = regexp.MustCompile(`[\s\-]`)
@@ -78,6 +80,13 @@ func NormalizeAndValidateV4(piiType, value string) (string, error) {
 		v = strings.ToUpper(v)
 		if !reV4Passport.MatchString(v) {
 			return "", errors.New("invalid passport format (expected 1 letter + 7 digits)")
+		}
+		return v, nil
+
+	case PIITypeVoterID:
+		v = strings.ToUpper(v)
+		if !reV4VoterID.MatchString(v) {
+			return "", errors.New("invalid voter id format (expected 3 letters + 7 digits)")
 		}
 		return v, nil
 

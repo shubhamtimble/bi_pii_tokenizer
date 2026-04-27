@@ -46,6 +46,7 @@ var (
     rePhone10Legacy  = regexp.MustCompile(`^[6-9][0-9]{9}$`)
     reEmailLegacy    = regexp.MustCompile(`^[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}$`)
     rePassportLegacy = regexp.MustCompile(`^[A-Z][0-9]{7}$`)
+    reVoterIDLegacy  = regexp.MustCompile(`^[A-Z]{3}[0-9]{7}$`)
     reNonDigitLegacy = regexp.MustCompile(`[^0-9]`)
 )
 
@@ -65,6 +66,10 @@ func isValidEmail(raw string) bool {
 
 func isValidPassport(raw string) bool {
     return rePassportLegacy.MatchString(strings.ToUpper(strings.TrimSpace(raw)))
+}
+
+func isValidVoterID(raw string) bool {
+    return reVoterIDLegacy.MatchString(strings.ToUpper(strings.TrimSpace(raw)))
 }
 
 func (s *Server) tokenizeHandler(w http.ResponseWriter, r *http.Request) {
@@ -88,7 +93,7 @@ func (s *Server) tokenizeHandler(w http.ResponseWriter, r *http.Request) {
 	// generation logic so a typo'd or malicious pii_type can't slip into the
 	// default base36 fallback path.
 	switch req.PIIType {
-	case "PAN", "AADHAR", "PHONE", "MOBILE", "EMAIL", "PASSPORT":
+	case "PAN", "AADHAR", "PHONE", "MOBILE", "EMAIL", "PASSPORT", "VOTERID":
 	default:
 		s.auditFail(ev, start, http.StatusBadRequest, "Invalid PII Type", w)
 		return
@@ -129,6 +134,13 @@ func (s *Server) tokenizeHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if req.PIIType == "VOTERID" {
+		if !isValidVoterID(req.PIIValue) {
+			s.auditFail(ev, start, http.StatusBadRequest, fmt.Sprintf("Invalid %s Format", req.PIIType), w)
+			return
+		}
+	}
+
 	fpt, err := s.Tokenize(r.Context(), req.PIIType, req.PIIValue)
 	if err != nil {
 		log.Printf("tokenize error: %v", err)
@@ -156,7 +168,7 @@ func (s *Server) Tokenize(ctx context.Context, dataType, value string) (string, 
 		normalized = strings.ToUpper(strings.TrimSpace(value))
 	case "EMAIL":
 		normalized = strings.ToLower(strings.TrimSpace(value))
-	case "PASSPORT":
+	case "PASSPORT", "VOTERID":
 		normalized = strings.ToUpper(strings.TrimSpace(value))
 	case "PHONE", "MOBILE":
 		normalized = normalizeLegacyPhone(value)

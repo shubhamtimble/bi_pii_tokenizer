@@ -240,6 +240,43 @@ func (g *FF1GeneratorV4) TokenizePassport(normalized string, tweak []byte) (stri
 	return string(outLetter) + ctDigits, nil
 }
 
+// TokenizeVoterID handles the Indian EPIC format: 3 uppercase letters (radix
+// 26 via canon26 mapping) + 7 digits (radix 10). Letter and digit blocks are
+// encrypted independently with per-segment tweaks. Output preserves the
+// 3L7D shape so it remains a valid Voter ID.
+func (g *FF1GeneratorV4) TokenizeVoterID(normalized string, tweak []byte) (string, error) {
+	if len(normalized) != 10 {
+		return "", fmt.Errorf("VOTERID must be 10 chars")
+	}
+	letters := normalized[0:3]
+	digits := normalized[3:10]
+	for i := 0; i < 3; i++ {
+		c := letters[i]
+		if c < 'A' || c > 'Z' {
+			return "", fmt.Errorf("VOTERID letter prefix must be A-Z")
+		}
+	}
+	for i := 0; i < 7; i++ {
+		c := digits[i]
+		if c < '0' || c > '9' {
+			return "", fmt.Errorf("VOTERID digit suffix must be 0-9")
+		}
+	}
+
+	ctLetters, err := g.encryptLettersUpper(letters, deriveSegmentTweak(tweak, "voterid_letters"))
+	if err != nil {
+		return "", fmt.Errorf("ff1 voterid letters: %w", err)
+	}
+	ctDigits, err := g.encryptDigits(digits, deriveSegmentTweak(tweak, "voterid_digits"))
+	if err != nil {
+		return "", fmt.Errorf("ff1 voterid digits: %w", err)
+	}
+	if len(ctLetters) != 3 || len(ctDigits) != 7 {
+		return "", fmt.Errorf("unexpected cipher length")
+	}
+	return ctLetters + ctDigits, nil
+}
+
 // TokenizeDL treats the normalized DL (uppercase, separators stripped) as an
 // alphanumeric block and encrypts it with FF1 radix 36 (0-9 a-z). Output is
 // re-upper-cased; output positions no longer guarantee letter-vs-digit parity

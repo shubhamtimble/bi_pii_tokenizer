@@ -122,6 +122,8 @@ func FPTFromBlindIndexWithCounter(blindHex, original, dataType string, counter i
 		return fptDigitsWithFirstRange(blindHex, 10, '6', '9', counter)
 	case "PASSPORT":
 		return fptPassportFromBlind(blindHex, counter)
+	case "VOTERID":
+		return fptVoterIDFromBlind(blindHex, counter)
 	case "EMAIL":
 		return fptEmailFromBlind(blindHex, original, counter)
 	default:
@@ -203,6 +205,20 @@ func fptPassportFromBlind(blindHex string, counter int) (string, error) {
 	out := make([]byte, 8)
 	out[0] = byte('A' + (src[0] % 26))
 	for i := 1; i < 8; i++ {
+		out[i] = byte('0' + (src[i] % 10))
+	}
+	return string(out), nil
+}
+
+// fptVoterIDFromBlind produces a deterministic Indian Voter ID (EPIC) shaped
+// token: 3 uppercase letters followed by 7 digits, total 10 chars.
+func fptVoterIDFromBlind(blindHex string, counter int) (string, error) {
+	src := sha256.Sum256([]byte(blindHex + ":" + fmt.Sprint(counter)))
+	out := make([]byte, 10)
+	for i := 0; i < 3; i++ {
+		out[i] = byte('A' + (src[i] % 26))
+	}
+	for i := 3; i < 10; i++ {
 		out[i] = byte('0' + (src[i] % 10))
 	}
 	return string(out), nil

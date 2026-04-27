@@ -137,6 +137,32 @@ func TestNormalizeAndValidateV4_Passport(t *testing.T) {
 	}
 }
 
+func TestNormalizeAndValidateV4_VoterID(t *testing.T) {
+	cases := []struct {
+		in, want string
+		ok       bool
+	}{
+		{"ABC1234567", "ABC1234567", true},
+		{"abc1234567", "ABC1234567", true},
+		{"  XYZ9876543 ", "XYZ9876543", true},
+		{"AB12345678", "", false},     // 2 letters
+		{"ABCD123456", "", false},     // 4 letters
+		{"ABC123456", "", false},      // 9 chars
+		{"ABC12345678", "", false},    // 11 chars
+		{"123ABC4567", "", false},     // letters not in front
+		{"", "", false},
+	}
+	for _, c := range cases {
+		got, err := NormalizeAndValidateV4(PIITypeVoterID, c.in)
+		if (err == nil) != c.ok {
+			t.Errorf("VOTERID %q: ok=%v want=%v err=%v", c.in, err == nil, c.ok, err)
+		}
+		if c.ok && got != c.want {
+			t.Errorf("VOTERID %q: got=%q want=%q", c.in, got, c.want)
+		}
+	}
+}
+
 func TestNormalizeAndValidateV4_UnknownType(t *testing.T) {
 	if _, err := NormalizeAndValidateV4("DNA", "whatever"); err == nil {
 		t.Fatal("expected error for unsupported type")
