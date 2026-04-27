@@ -75,9 +75,16 @@ func (s *Server) DetokenizeV4(ctx context.Context, fpt string) (string, error) {
 		return "", ErrTokenNotFound
 	}
 
+	// async pipelined write-back — fire-and-forget on a background ctx
 	if s.cache != nil {
-		_ = s.cache.SetV4ByFPT(ctx, pt.FPT, pt.EncryptedValue)
-		_ = s.cache.SetV4ByBlindIndex(ctx, pt.BlindIndex, pt.FPT)
+		fpt := pt.FPT
+		blindIdx := pt.BlindIndex
+		enc := pt.EncryptedValue
+		go func() {
+			bgCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			_ = s.cache.SetV4BlindAndFPT(bgCtx, blindIdx, fpt, enc)
+		}()
 	}
 
 	plain, err := common.AESGCMDecrypt(s.aesKey, string(pt.EncryptedValue))

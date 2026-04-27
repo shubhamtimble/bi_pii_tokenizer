@@ -80,10 +80,19 @@ func (s *Server) Detokenize(ctx context.Context, fpt string) (string, error) {
 		return "", ErrTokenNotFound
 	}
 
-	// write-back to cache
+	// async write-back to cache — fire-and-forget on a background ctx so the
+	// request returns without waiting on Redis. Uses the pipelined helper so
+	// the goroutine spends one round-trip total.
 	if s.cache != nil {
-		_ = s.cache.SetByFPT(ctx, pt.DataType, pt.FPT, pt.EncryptedValue)
-		_ = s.cache.SetByBlindIndex(ctx, pt.DataType, pt.BlindIndex, pt.FPT)
+		dataType := pt.DataType
+		fpt := pt.FPT
+		blindIdx := pt.BlindIndex
+		enc := pt.EncryptedValue
+		go func() {
+			bgCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			_ = s.cache.SetBlindAndFPT(bgCtx, dataType, blindIdx, fpt, enc)
+		}()
 	}
 
 	plain, err := common.AESGCMDecrypt(s.aesKey, string(pt.EncryptedValue))

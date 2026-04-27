@@ -180,11 +180,8 @@ func (s *Server) Tokenize(ctx context.Context, dataType, value string) (string, 
 		return "", err
 	}
 	if found != nil {
-		// write-back to cache (EncryptedValue is []byte in model)
-		if s.cache != nil {
-			_ = s.cache.SetByBlindIndex(ctx, dataType, blind, found.FPT)
-			_ = s.cache.SetByFPT(ctx, dataType, found.FPT, found.EncryptedValue)
-		}
+		// write-back to cache (single pipelined round-trip)
+		_ = s.cache.SetBlindAndFPT(ctx, dataType, blind, found.FPT, found.EncryptedValue)
 		return found.FPT, nil
 	}
 
@@ -211,11 +208,8 @@ func (s *Server) Tokenize(ctx context.Context, dataType, value string) (string, 
 
 			created, ierr := s.store.InsertToken(encBytes, blind, candidate, dataType) // InsertToken expects []byte
 			if ierr == nil && created != nil {
-				// success — write-through cache (pass []byte)
-				if s.cache != nil {
-					_ = s.cache.SetByBlindIndex(ctx, dataType, blind, candidate)
-					_ = s.cache.SetByFPT(ctx, dataType, candidate, encBytes)
-				}
+				// success — write-through cache (single pipelined round-trip)
+				_ = s.cache.SetBlindAndFPT(ctx, dataType, blind, candidate, encBytes)
 				return candidate, nil
 			}
 			// likely race — retry
@@ -225,11 +219,8 @@ func (s *Server) Tokenize(ctx context.Context, dataType, value string) (string, 
 
 		// existing token found
 		if existing.BlindIndex == blind {
-			// same PII, write-back and return
-			if s.cache != nil {
-				_ = s.cache.SetByBlindIndex(ctx, dataType, blind, existing.FPT)
-				_ = s.cache.SetByFPT(ctx, dataType, existing.FPT, existing.EncryptedValue)
-			}
+			// same PII, write-back and return (single pipelined round-trip)
+			_ = s.cache.SetBlindAndFPT(ctx, dataType, blind, existing.FPT, existing.EncryptedValue)
 			return existing.FPT, nil
 		}
 		// collision with different PII -> next counter

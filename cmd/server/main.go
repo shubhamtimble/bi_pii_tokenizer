@@ -119,8 +119,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("open db: %v", err)
 	}
-	db.SetMaxOpenConns(20)
-	db.SetMaxIdleConns(5)
+	// Pool tuning: more warm idle conns to remove connect-tax under bursts.
+	// MaxOpen sized comfortably above MaxIdle so spikes still spin up extras.
+	db.SetMaxOpenConns(50)
+	db.SetMaxIdleConns(20)
 	db.SetConnMaxLifetime(time.Minute * 15)
 
 	if err = db.Ping(); err != nil {

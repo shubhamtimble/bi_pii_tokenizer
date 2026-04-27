@@ -162,11 +162,8 @@ func (s *Server) generateV4FPT(piiType, normalized string, tweak []byte) (string
 }
 
 func (s *Server) cacheWriteThroughV4(ctx context.Context, blind, fpt string, enc []byte) {
-	if s.cache == nil {
-		return
-	}
-	_ = s.cache.SetV4ByBlindIndex(ctx, blind, fpt)
-	_ = s.cache.SetV4ByFPT(ctx, fpt, enc)
+	// single pipelined round-trip writes both blind→fpt and fpt→enc
+	_ = s.cache.SetV4BlindAndFPT(ctx, blind, fpt, enc)
 }
 
 // auditFail writes the error response and emits a failure audit event.

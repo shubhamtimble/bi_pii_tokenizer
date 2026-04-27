@@ -141,6 +141,32 @@ func (c *Cache) SetV4ByFPT(ctx context.Context, fpt string, encryptedValue []byt
 	return c.set(ctx, v4FptCacheKey(fpt), string(encryptedValue))
 }
 
+// SetBlindAndFPT writes both v1 cache entries (blind→fpt and fpt→enc) in a
+// single Redis round-trip using the client pipeline. Equivalent to calling
+// SetByBlindIndex + SetByFPT but ~50% fewer network ops.
+func (c *Cache) SetBlindAndFPT(ctx context.Context, dataType, blindIndex, fpt string, encryptedValue []byte) error {
+	if c == nil || c.client == nil {
+		return nil
+	}
+	pipe := c.client.Pipeline()
+	pipe.Set(ctx, blindCacheKey(dataType, blindIndex), fpt, c.ttl)
+	pipe.Set(ctx, fptCacheKey(dataType, fpt), string(encryptedValue), c.ttl)
+	_, err := pipe.Exec(ctx)
+	return err
+}
+
+// SetV4BlindAndFPT — pipelined v4 equivalent of SetBlindAndFPT.
+func (c *Cache) SetV4BlindAndFPT(ctx context.Context, blindIndex, fpt string, encryptedValue []byte) error {
+	if c == nil || c.client == nil {
+		return nil
+	}
+	pipe := c.client.Pipeline()
+	pipe.Set(ctx, v4BlindCacheKey(blindIndex), fpt, c.ttl)
+	pipe.Set(ctx, v4FptCacheKey(fpt), string(encryptedValue), c.ttl)
+	_, err := pipe.Exec(ctx)
+	return err
+}
+
 // internal helpers
 func (c *Cache) get(ctx context.Context, key string) (string, error) {
 	if c == nil || c.client == nil {

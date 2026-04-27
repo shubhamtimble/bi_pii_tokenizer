@@ -1,12 +1,10 @@
 package bi_internal
 
 import (
-	"context"
 	"encoding/json"
 	"log"
 	"net/http"
 	"os"
-	"time"
 
 	"github.com/gorilla/mux"
 
@@ -75,20 +73,15 @@ func NewServer(store *models.Store) *Server {
 
 	s.audit = NewAuditLoggerFromEnv(store.DB())
 
-	// init redis cluster cache
+	// init redis cache. Preload runs in the background so the HTTP listener
+	// comes up immediately; the first few requests after startup may miss
+	// cache and go straight to DB (the normal cache-miss path).
 	cache, cerr := NewCacheFromEnv()
 	if cerr != nil {
-		log.Printf("warning: redis cluster init failed, running without cache: %v", cerr)
+		log.Printf("warning: redis init failed, running without cache: %v", cerr)
 	} else {
 		s.cache = cache
-		// synchronous preload with generous timeout; adjust as needed
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
-		defer cancel()
-		if err := s.cache.PreloadFromStore(ctx, store); err != nil {
-			log.Printf("warning: cache preload failed: %v", err)
-		} else {
-			log.Println("cache preload completed")
-		}
+		s.cache.PreloadFromStoreBackground(store)
 	}
 
 	s.routes()
