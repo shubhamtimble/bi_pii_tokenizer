@@ -128,7 +128,10 @@ func main() {
 	}
 
 	// Run migrations before server starts
-	if err := common.RunMigrations(db, "migrations/001_create_pii_tokens.sql"); err != nil {
+	if err := common.RunMigrations(db,
+		"migrations/001_create_pii_tokens.sql",
+		"migrations/002_create_pii_audit_logs.sql",
+	); err != nil {
 		log.Fatalf("migration failed: %v", err)
 	}
 

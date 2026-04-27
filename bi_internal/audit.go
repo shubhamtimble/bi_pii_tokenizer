@@ -67,23 +67,9 @@ const (
 	auditMaxLineLen = 1 << 20 // 1 MiB upper bound per line (scanner buf)
 )
 
-const auditTableDDL = `
-CREATE TABLE IF NOT EXISTS pii_audit_logs (
-    id BIGSERIAL PRIMARY KEY,
-    ts TIMESTAMPTZ NOT NULL,
-    req_id TEXT,
-    action TEXT NOT NULL,
-    version TEXT NOT NULL,
-    pii_type TEXT,
-    fpt TEXT,
-    status TEXT NOT NULL,
-    latency_ms BIGINT,
-    error TEXT,
-    remote_ip TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_pii_audit_logs_ts ON pii_audit_logs (ts);
-CREATE INDEX IF NOT EXISTS idx_pii_audit_logs_fpt ON pii_audit_logs (fpt);
-CREATE INDEX IF NOT EXISTS idx_pii_audit_logs_action_status ON pii_audit_logs (action, status);`
+// pii_audit_logs schema lives in migrations/002_create_pii_audit_logs.sql and
+// is applied by common.RunMigrations at server startup before this logger is
+// initialized.
 
 // NewAuditLoggerFromEnv builds the logger. Returns nil when disabled so
 // AuditLogger.Log on a nil receiver is a no-op for handlers.
@@ -94,13 +80,6 @@ func NewAuditLoggerFromEnv(db *sql.DB) *AuditLogger {
 	}
 	if db == nil {
 		log.Println("audit: db handle nil — logger disabled")
-		return nil
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if _, err := db.ExecContext(ctx, auditTableDDL); err != nil {
-		log.Printf("audit: DDL failed (%v) — logger disabled", err)
 		return nil
 	}
 
