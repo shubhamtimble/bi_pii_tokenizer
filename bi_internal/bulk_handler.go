@@ -26,11 +26,12 @@ type BulkTokenizeResponse struct {
 // HTTP handler for POST /bulk-tokenize
 func (s *Server) bulkTokenizeHandler(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
-	ev := AuditEvent{Action: "bulk_tokenize", Version: "v1", RemoteIP: clientIP(r)}
+	ev := AuditEvent{Action: "bulk_tokenize", Version: "v1", IP: clientIP(r)}
 
 	var req BulkTokenizeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		ev.Status = "error"
+		ev.Action = "bulk_tokenize.failed"
+		ev.Decision = "failure"
 		ev.Error = "invalid JSON body"
 		ev.LatencyMS = time.Since(start).Milliseconds()
 		s.audit.Log(ev)
@@ -38,7 +39,8 @@ func (s *Server) bulkTokenizeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.SrcDSN == "" || req.SrcTable == "" || req.SrcColumn == "" || req.DataType == "" || req.TokenColumn == "" {
-		ev.Status = "error"
+		ev.Action = "bulk_tokenize.failed"
+		ev.Decision = "failure"
 		ev.Error = "missing required fields"
 		ev.LatencyMS = time.Since(start).Milliseconds()
 		s.audit.Log(ev)
@@ -52,7 +54,8 @@ func (s *Server) bulkTokenizeHandler(w http.ResponseWriter, r *http.Request) {
 	processed, success, err := s.BulkTokenize(context.Background(), req.SrcDSN, req.SrcTable, req.SrcColumn, req.DataType, req.TokenColumn)
 	if err != nil {
 		log.Printf("bulk-tokenize error: %v", err)
-		ev.Status = "error"
+		ev.Action = "bulk_tokenize.failed"
+		ev.Decision = "failure"
 		ev.Error = fmt.Sprintf("%v (processed=%d success=%d)", err, processed, success)
 		ev.LatencyMS = time.Since(start).Milliseconds()
 		s.audit.Log(ev)
@@ -60,7 +63,7 @@ func (s *Server) bulkTokenizeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ev.Status = "success"
+	ev.Decision = "success"
 	ev.Error = fmt.Sprintf("processed=%d success=%d", processed, success)
 	ev.LatencyMS = time.Since(start).Milliseconds()
 	s.audit.Log(ev)

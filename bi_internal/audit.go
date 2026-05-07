@@ -18,19 +18,23 @@ import (
 	"github.com/lib/pq"
 )
 
-// AuditEvent is one row of pii_audit_logs. Plaintext PII and blind indexes
-// are deliberately omitted — only the already-public token is recorded.
+// AuditEvent is one row of pii_audit_logs (v2 schema). Plaintext PII and
+// blind indexes are deliberately omitted — only the already-public FPT plus
+// a one-way SHA256 fingerprint of the value (value_hash) is recorded.
 type AuditEvent struct {
-	Timestamp time.Time `json:"ts"`
-	RequestID string    `json:"req_id,omitempty"`
-	Action    string    `json:"action"`
-	Version   string    `json:"version"`
-	PIIType   string    `json:"pii_type,omitempty"`
-	FPT       string    `json:"fpt,omitempty"`
-	Status    string    `json:"status"`
-	LatencyMS int64     `json:"latency_ms"`
-	Error     string    `json:"error,omitempty"`
-	RemoteIP  string    `json:"remote_ip,omitempty"`
+	OccurredAt time.Time `json:"occurred_at"`
+	RequestID  string    `json:"req_id,omitempty"`
+	Actor      string    `json:"actor,omitempty"`      // user id; nil/"" for tokenize
+	Reason     string    `json:"reason,omitempty"`     // purpose code; nil/"" for tokenize
+	Action     string    `json:"action"`               // tokenize | detokenize | *.failed
+	Decision   string    `json:"decision"`             // success | failure | denied
+	Version    string    `json:"version"`              // v1 | v4
+	PIIType    string    `json:"pii_type,omitempty"`
+	FPT        string    `json:"fpt,omitempty"`
+	ValueHash  string    `json:"value_hash,omitempty"` // "sha256:<hex>"
+	LatencyMS  int64     `json:"latency_ms"`
+	Error      string    `json:"error,omitempty"`
+	IP         string    `json:"ip,omitempty"`
 }
 
 // AuditLogger persists audit events using a local WAL file + once-per-day
@@ -167,13 +171,13 @@ func (a *AuditLogger) Log(ev AuditEvent) {
 	if a == nil {
 		return
 	}
-	if ev.Timestamp.IsZero() {
-		ev.Timestamp = time.Now().UTC()
+	if ev.OccurredAt.IsZero() {
+		ev.OccurredAt = time.Now().UTC()
 	}
 	select {
 	case a.ch <- ev:
 	default:
-		log.Printf("audit: channel full — dropping event action=%s status=%s", ev.Action, ev.Status)
+		log.Printf("audit: channel full — dropping event action=%s decision=%s", ev.Action, ev.Decision)
 	}
 }
 
@@ -445,8 +449,8 @@ func (a *AuditLogger) insertBatch(ctx context.Context, evs []AuditEvent) error {
 		return err
 	}
 	stmt, err := tx.PrepareContext(ctx, pq.CopyIn("pii_audit_logs",
-		"ts", "req_id", "action", "version", "pii_type",
-		"fpt", "status", "latency_ms", "error", "remote_ip",
+		"occurred_at", "req_id", "actor", "reason", "action", "decision",
+		"version", "pii_type", "fpt", "value_hash", "latency_ms", "error", "ip",
 	))
 	if err != nil {
 		_ = tx.Rollback()
@@ -454,16 +458,19 @@ func (a *AuditLogger) insertBatch(ctx context.Context, evs []AuditEvent) error {
 	}
 	for _, ev := range evs {
 		if _, err := stmt.ExecContext(ctx,
-			ev.Timestamp,
+			ev.OccurredAt,
 			nullIfEmpty(ev.RequestID),
+			nullIfEmpty(ev.Actor),
+			nullIfEmpty(ev.Reason),
 			ev.Action,
+			ev.Decision,
 			ev.Version,
 			nullIfEmpty(ev.PIIType),
 			nullIfEmpty(ev.FPT),
-			ev.Status,
+			nullIfEmpty(ev.ValueHash),
 			ev.LatencyMS,
 			nullIfEmpty(ev.Error),
-			nullIfEmpty(ev.RemoteIP),
+			nullIfEmpty(ev.IP),
 		); err != nil {
 			_ = stmt.Close()
 			_ = tx.Rollback()

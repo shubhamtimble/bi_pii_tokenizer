@@ -91,7 +91,7 @@ func TestAudit_WritesLinesToWAL(t *testing.T) {
 			Version: "v4",
 			PIIType: "PAN",
 			FPT:     "XMKPL4829Z",
-			Status:  "success",
+			Decision: "success",
 		})
 	}
 	// give writer goroutine time to flush via fsync ticker
@@ -104,7 +104,7 @@ func TestAudit_WritesLinesToWAL(t *testing.T) {
 		t.Fatalf("expected %d events on disk, got %d", n, len(evs))
 	}
 	for i, ev := range evs {
-		if ev.Action != "tokenize" || ev.Status != "success" || ev.Timestamp.IsZero() {
+		if ev.Action != "tokenize" || ev.Decision != "success" || ev.OccurredAt.IsZero() {
 			t.Errorf("event %d malformed: %+v", i, ev)
 		}
 	}
@@ -122,7 +122,7 @@ func TestAudit_RotateMovesWALToPending(t *testing.T) {
 	a := newTestLogger(t, dir)
 
 	for i := 0; i < 20; i++ {
-		a.Log(AuditEvent{Action: "tokenize", Version: "v4", Status: "success"})
+		a.Log(AuditEvent{Action: "tokenize", Version: "v4", Decision: "success"})
 	}
 	time.Sleep(30 * time.Millisecond)
 
@@ -151,13 +151,13 @@ func TestAudit_RotateMergesExistingPending(t *testing.T) {
 
 	// pre-seed a pending file from a hypothetical previous run
 	pre := filepath.Join(dir, walPendingName)
-	if err := os.WriteFile(pre, []byte(`{"ts":"2026-04-22T00:00:00Z","action":"tokenize","version":"v4","status":"success"}`+"\n"), 0640); err != nil {
+	if err := os.WriteFile(pre, []byte(`{"occurred_at":"2026-04-22T00:00:00Z","action":"tokenize","version":"v4","decision":"success"}`+"\n"), 0640); err != nil {
 		t.Fatalf("seed pending: %v", err)
 	}
 
 	a := newTestLogger(t, dir)
 	for i := 0; i < 5; i++ {
-		a.Log(AuditEvent{Action: "tokenize", Version: "v4", Status: "success"})
+		a.Log(AuditEvent{Action: "tokenize", Version: "v4", Decision: "success"})
 	}
 	time.Sleep(30 * time.Millisecond)
 

@@ -12,7 +12,9 @@ import (
 )
 
 type DetokenizeV4Request struct {
-	FPT string `json:"fpt"`
+	FPT    string `json:"fpt"`
+	Actor  string `json:"actor"`
+	Reason string `json:"reason"`
 }
 
 type DetokenizeV4Response struct {
@@ -23,7 +25,7 @@ type DetokenizeV4Response struct {
 
 func (s *Server) detokenizeV4Handler(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
-	ev := AuditEvent{Action: "detokenize", Version: "v4", RemoteIP: clientIP(r)}
+	ev := AuditEvent{Action: "detokenize", Version: "v4", IP: clientIP(r)}
 
 	var req DetokenizeV4Request
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -31,8 +33,16 @@ func (s *Server) detokenizeV4Handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	fpt := strings.TrimSpace(req.FPT)
+	actor := strings.TrimSpace(req.Actor)
+	reason := strings.TrimSpace(req.Reason)
+	ev.Actor = actor
+	ev.Reason = reason
 	if fpt == "" {
 		s.auditFail(ev, start, http.StatusBadRequest, "fpt required", w)
+		return
+	}
+	if actor == "" || reason == "" {
+		s.auditFail(ev, start, http.StatusBadRequest, "actor and reason are required", w)
 		return
 	}
 	ev.FPT = fpt
@@ -48,7 +58,8 @@ func (s *Server) detokenizeV4Handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ev.PIIType = dataType
-	ev.Status = "success"
+	ev.ValueHash = common.ValueHash(plain)
+	ev.Decision = "success"
 	ev.LatencyMS = time.Since(start).Milliseconds()
 	s.audit.Log(ev)
 

@@ -30,7 +30,7 @@ const v4MaxAttempts = 100
 
 func (s *Server) tokenizeV4Handler(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
-	ev := AuditEvent{Action: "tokenize", Version: "v4", RemoteIP: clientIP(r)}
+	ev := AuditEvent{Action: "tokenize", Version: "v4", IP: clientIP(r)}
 
 	var req TokenizeV4Request
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -70,7 +70,8 @@ func (s *Server) tokenizeV4Handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ev.FPT = fpt
-	ev.Status = "success"
+	ev.ValueHash = common.ValueHash(normalized)
+	ev.Decision = "success"
 	ev.LatencyMS = time.Since(start).Milliseconds()
 	s.audit.Log(ev)
 
@@ -175,8 +176,13 @@ func (s *Server) cacheWriteThroughV4(ctx context.Context, dataType, blind, fpt s
 
 // auditFail writes the error response and emits a failure audit event.
 // Intended for handler-level short-circuits (validation, config, decode).
+// Suffixes ".failed" on the action so consumers can filter events by outcome
+// just on action; sets decision="failure" for fine-grained query.
 func (s *Server) auditFail(ev AuditEvent, start time.Time, status int, msg string, w http.ResponseWriter) {
-	ev.Status = "error"
+	if ev.Action != "" && !strings.HasSuffix(ev.Action, ".failed") {
+		ev.Action += ".failed"
+	}
+	ev.Decision = "failure"
 	ev.Error = msg
 	ev.LatencyMS = time.Since(start).Milliseconds()
 	s.audit.Log(ev)

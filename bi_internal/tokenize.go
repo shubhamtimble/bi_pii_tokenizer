@@ -75,7 +75,7 @@ func isValidVoterID(raw string) bool {
 
 func (s *Server) tokenizeHandler(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
-	ev := AuditEvent{Action: "tokenize", Version: "v1", RemoteIP: clientIP(r)}
+	ev := AuditEvent{Action: "tokenize", Version: "v1", IP: clientIP(r)}
 
 	var req TokenizeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -149,7 +149,8 @@ func (s *Server) tokenizeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ev.FPT = fpt
-	ev.Status = "success"
+	ev.ValueHash = common.ValueHash(common.Normalize(req.PIIType, req.PIIValue))
+	ev.Decision = "success"
 	ev.LatencyMS = time.Since(start).Milliseconds()
 	s.audit.Log(ev)
 

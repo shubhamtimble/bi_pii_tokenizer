@@ -106,6 +106,7 @@ func (s *Server) routes() {
 	sr.HandleFunc("/bulk-tokenize", s.bulkTokenizeHandler).Methods("POST")
 	sr.HandleFunc("/v4/tokenize", s.tokenizeV4Handler).Methods("POST")
 	sr.HandleFunc("/v4/detokenize", s.detokenizeV4Handler).Methods("POST")
+	sr.HandleFunc("/audit/events", s.auditEventsHandler).Methods(http.MethodGet)
 	// health
 	sr.HandleFunc("/health", HealthHandler).Methods(http.MethodGet)
 }
