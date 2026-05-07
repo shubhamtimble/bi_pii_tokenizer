@@ -92,15 +92,21 @@ func (c *Cache) Close() error {
 	return c.client.Close()
 }
 
-func blindCacheKey(dataType, blindIndex string) string {
-	return fmt.Sprintf("pii:v1:%s:blind:%s", dataType, blindIndex)
+// Unified single cache namespace: both legacy and v4 endpoints share these
+// keys. Same shared DB vault → same shared cache. Type is recovered from
+// the packed value (packCacheValue) on detokenize, so the type never needs
+// to appear in the key. Blind index is unique across types (HMAC-SHA256
+// over disjoint validated formats), so it doesn't need a type in the key
+// either.
+//
+// dataType is accepted by these helpers for source-compatibility with
+// existing callers but no longer used in the key construction.
+func blindCacheKey(_ /*dataType*/, blindIndex string) string {
+	return fmt.Sprintf("pii:blind:%s", blindIndex)
 }
 
-// fptCacheKey is type-agnostic: the FPT alone is unique across all PII types
-// (uq_pii_tokens_fpt), so detokenize can look up by FPT without first knowing
-// the type. Type is recovered from the cached *value* via packCacheValue.
 func fptCacheKey(fpt string) string {
-	return fmt.Sprintf("pii:v1:fpt:%s", fpt)
+	return fmt.Sprintf("pii:fpt:%s", fpt)
 }
 
 // packCacheValue prefixes the AES-GCM envelope bytes with the data_type and
@@ -122,14 +128,13 @@ func unpackCacheValue(v string) (dataType string, encryptedValue []byte) {
 	return v[:i], []byte(v[i+1:])
 }
 
-// v4 cache keys are data-type-agnostic so detokenize can read without first
-// having to learn the PII type. The value at v4FptCacheKey is the base64
-// AES-GCM envelope as bytes; the value at v4BlindCacheKey is the FPT.
+// v4 helpers historically used a separate namespace; now they alias the
+// unified key builders so legacy and v4 share one set of cache entries.
 func v4BlindCacheKey(blindIndex string) string {
-	return fmt.Sprintf("pii:v4:blind:%s", blindIndex)
+	return blindCacheKey("", blindIndex)
 }
 func v4FptCacheKey(fpt string) string {
-	return fmt.Sprintf("pii:v4:fpt:%s", fpt)
+	return fptCacheKey(fpt)
 }
 
 // GetV4ByBlindIndex returns the FPT stored for a blind index, or "" on miss.
