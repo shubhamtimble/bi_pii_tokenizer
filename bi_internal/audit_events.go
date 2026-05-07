@@ -102,8 +102,10 @@ func (s *Server) auditEventsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	sqlStr := `SELECT id, occurred_at, action, actor, pii_type, fpt, value_hash,
-                       reason, decision, ip, latency_ms
+	// We SELECT both `id` (internal monotonic cursor) and `event_id` (public
+	// UUID returned to clients). Pagination still walks newest-first by `id`.
+	sqlStr := `SELECT id, event_id, occurred_at, action, actor, pii_type, fpt,
+                       value_hash, reason, decision, ip, latency_ms
                 FROM pii_audit_logs`
 	if len(conds) > 0 {
 		sqlStr += " WHERE " + strings.Join(conds, " AND ")
@@ -119,10 +121,12 @@ func (s *Server) auditEventsHandler(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 
 	out := make([]AuditEventRecord, 0, limit)
-	var lastID int64
+	lastReturnedID := int64(0)
+	hasMore := false
 	for rows.Next() {
 		var (
 			id         int64
+			eventID    string
 			occurredAt time.Time
 			action     string
 			actor      sql.NullString
@@ -134,18 +138,18 @@ func (s *Server) auditEventsHandler(w http.ResponseWriter, r *http.Request) {
 			ip         sql.NullString
 			latencyMS  sql.NullInt64
 		)
-		if err := rows.Scan(&id, &occurredAt, &action, &actor, &piiType, &fpt,
+		if err := rows.Scan(&id, &eventID, &occurredAt, &action, &actor, &piiType, &fpt,
 			&valueHash, &reason, &decision, &ip, &latencyMS); err != nil {
 			writeJSONError(w, http.StatusInternalServerError, "scan failed")
 			return
 		}
 		if len(out) >= limit {
-			// Found the +1 lookahead row → there's a next page; stop adding.
-			lastID = id
+			// This is the +1 lookahead row → mark "has more" and stop adding.
+			hasMore = true
 			break
 		}
 		out = append(out, AuditEventRecord{
-			EventID:    strconv.FormatInt(id, 10),
+			EventID:    eventID,
 			OccurredAt: occurredAt.UTC().Format(time.RFC3339Nano),
 			Action:     action,
 			Actor:      nullStrPtr(actor),
@@ -157,7 +161,7 @@ func (s *Server) auditEventsHandler(w http.ResponseWriter, r *http.Request) {
 			IP:         nullStrPtr(ip),
 			LatencyMS:  latencyMS.Int64,
 		})
-		lastID = id
+		lastReturnedID = id
 	}
 	if err := rows.Err(); err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "iter failed")
@@ -166,20 +170,11 @@ func (s *Server) auditEventsHandler(w http.ResponseWriter, r *http.Request) {
 
 	resp := auditEventsResponse{Data: out}
 	resp.Meta.Limit = limit
-	if len(out) == limit && lastID > 0 {
-		// We hit the limit and saw a +1 lookahead row → emit cursor.
-		// (lastID here is the id of the lookahead row — the next page should
-		// start strictly below the last RETURNED row, which is out[len-1].)
-		// Use the last *returned* id for safer continuation.
-		// We re-derive it from out's last entry:
-		if len(out) > 0 {
-			if id, err := strconv.ParseInt(out[len(out)-1].EventID, 10, 64); err == nil {
-				cursor, _ := json.Marshal(struct {
-					ID int64 `json:"id"`
-				}{id})
-				resp.Meta.NextCursor = base64.URLEncoding.EncodeToString(cursor)
-			}
-		}
+	if hasMore && lastReturnedID > 0 {
+		cursor, _ := json.Marshal(struct {
+			ID int64 `json:"id"`
+		}{lastReturnedID})
+		resp.Meta.NextCursor = base64.URLEncoding.EncodeToString(cursor)
 	}
 
 	w.Header().Set("Content-Type", "application/json")

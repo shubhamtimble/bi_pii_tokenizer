@@ -134,6 +134,7 @@ func main() {
 		"migrations/001_create_pii_tokens.sql",
 		"migrations/002_create_pii_audit_logs.sql",
 		"migrations/003_audit_log_v2.sql",
+		"migrations/004_audit_event_id_uuid.sql",
 	); err != nil {
 		log.Fatalf("migration failed: %v", err)
 	}
