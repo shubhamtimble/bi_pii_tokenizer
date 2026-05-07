@@ -108,13 +108,13 @@ func FPTFromBlindIndex(blindHex string, original string, dataType string) (strin
 }
 
 // FPTFromBlindIndexWithCounter returns a deterministic format-preserving token derived from blindHex and counter.
-// Supported dataType: "PAN" (5 letters + 4 digits + 1 letter), "AADHAR" (numeric, same length as original).
+// Supported dataType: "PAN" (5 letters + 4 digits + 1 letter), "AADHAAR" (numeric, same length as original).
 // For other types we fall back to base36 uppercase trimmed/padded to original length.
 func FPTFromBlindIndexWithCounter(blindHex, original, dataType string, counter int) (string, error) {
 	switch strings.ToUpper(dataType) {
 	case "PAN":
 		return fptPANFromBlind(blindHex, counter)
-	case "AADHAR":
+	case "AADHAAR":
 		// first digit forced to 1-9 so the token never starts with '0'
 		return fptDigitsWithFirstRange(blindHex, len(original), '1', '9', counter)
 	case "PHONE", "MOBILE":

@@ -9,7 +9,7 @@ import (
 // PII types supported by v4.
 const (
 	PIITypePAN      = "PAN"
-	PIITypeAADHAR   = "AADHAR"
+	PIITypeAADHAR   = "AADHAAR"
 	PIITypeMobile   = "MOBILE"
 	PIITypePhone    = "PHONE" // accepted alias for MOBILE (same validation + same FF1 path)
 	PIITypeEmail    = "EMAIL"

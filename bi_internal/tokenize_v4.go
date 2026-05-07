@@ -19,7 +19,8 @@ type TokenizeV4Request struct {
 }
 
 type TokenizeV4Response struct {
-	FPT string `json:"fpt"`
+	FPT     string `json:"fpt"`
+	PIIType string `json:"pii_type"`
 }
 
 // v4MaxAttempts bounds the FPT-collision retry loop. Each attempt regenerates
@@ -74,7 +75,10 @@ func (s *Server) tokenizeV4Handler(w http.ResponseWriter, r *http.Request) {
 	s.audit.Log(ev)
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(TokenizeV4Response{FPT: fpt})
+	_ = json.NewEncoder(w).Encode(TokenizeV4Response{
+		FPT:     fpt,
+		PIIType: ev.PIIType,
+	})
 }
 
 // TokenizeV4 implements the stateful vault flow for v4: the blind index
@@ -93,7 +97,7 @@ func (s *Server) TokenizeV4(ctx context.Context, piiType, normalized string) (st
 	if found, err := s.store.GetByBlindIndex(blind); err != nil {
 		return "", fmt.Errorf("db lookup by blind: %w", err)
 	} else if found != nil {
-		s.cacheWriteThroughV4(ctx, blind, found.FPT, found.EncryptedValue)
+		s.cacheWriteThroughV4(ctx, found.DataType, blind, found.FPT, found.EncryptedValue)
 		return found.FPT, nil
 	}
 
@@ -113,7 +117,7 @@ func (s *Server) TokenizeV4(ctx context.Context, piiType, normalized string) (st
 		}
 		if existing != nil {
 			if existing.BlindIndex == blind {
-				s.cacheWriteThroughV4(ctx, blind, existing.FPT, existing.EncryptedValue)
+				s.cacheWriteThroughV4(ctx, existing.DataType, blind, existing.FPT, existing.EncryptedValue)
 				return existing.FPT, nil
 			}
 			continue
@@ -127,7 +131,7 @@ func (s *Server) TokenizeV4(ctx context.Context, piiType, normalized string) (st
 
 		created, ierr := s.store.InsertToken(encBytes, blind, candidate, piiType)
 		if ierr == nil && created != nil {
-			s.cacheWriteThroughV4(ctx, blind, candidate, encBytes)
+			s.cacheWriteThroughV4(ctx, piiType, blind, candidate, encBytes)
 			return candidate, nil
 		}
 
@@ -135,7 +139,7 @@ func (s *Server) TokenizeV4(ctx context.Context, piiType, normalized string) (st
 		// fpt (our candidate collided with a concurrent different PII). Either
 		// way, retry with a new tweak if we can't resolve.
 		if existingByBlind, berr := s.store.GetByBlindIndex(blind); berr == nil && existingByBlind != nil {
-			s.cacheWriteThroughV4(ctx, blind, existingByBlind.FPT, existingByBlind.EncryptedValue)
+			s.cacheWriteThroughV4(ctx, existingByBlind.DataType, blind, existingByBlind.FPT, existingByBlind.EncryptedValue)
 			return existingByBlind.FPT, nil
 		}
 		log.Printf("tokenize_v4: insert race candidate=%s err=%v (retry)", candidate, ierr)
@@ -164,9 +168,9 @@ func (s *Server) generateV4FPT(piiType, normalized string, tweak []byte) (string
 	return "", fmt.Errorf("unsupported pii_type: %s", piiType)
 }
 
-func (s *Server) cacheWriteThroughV4(ctx context.Context, blind, fpt string, enc []byte) {
-	// single pipelined round-trip writes both blind→fpt and fpt→enc
-	_ = s.cache.SetV4BlindAndFPT(ctx, blind, fpt, enc)
+func (s *Server) cacheWriteThroughV4(ctx context.Context, dataType, blind, fpt string, enc []byte) {
+	// single pipelined round-trip writes both blind→fpt and fpt→packed(type,enc)
+	_ = s.cache.SetV4BlindAndFPT(ctx, dataType, blind, fpt, enc)
 }
 
 // auditFail writes the error response and emits a failure audit event.

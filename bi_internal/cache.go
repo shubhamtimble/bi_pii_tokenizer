@@ -95,8 +95,31 @@ func (c *Cache) Close() error {
 func blindCacheKey(dataType, blindIndex string) string {
 	return fmt.Sprintf("pii:v1:%s:blind:%s", dataType, blindIndex)
 }
-func fptCacheKey(dataType, fpt string) string {
-	return fmt.Sprintf("pii:v1:%s:fpt:%s", dataType, fpt)
+
+// fptCacheKey is type-agnostic: the FPT alone is unique across all PII types
+// (uq_pii_tokens_fpt), so detokenize can look up by FPT without first knowing
+// the type. Type is recovered from the cached *value* via packCacheValue.
+func fptCacheKey(fpt string) string {
+	return fmt.Sprintf("pii:v1:fpt:%s", fpt)
+}
+
+// packCacheValue prefixes the AES-GCM envelope bytes with the data_type and
+// a NUL separator so a cache hit can return both pieces in one round-trip.
+// Format: "<DATA_TYPE>\x00<encrypted_value>". NUL is illegal in base64 and
+// in our PII type whitelist, so it's an unambiguous delimiter.
+func packCacheValue(dataType string, encryptedValue []byte) string {
+	return dataType + "\x00" + string(encryptedValue)
+}
+
+// unpackCacheValue is the inverse of packCacheValue. If the value lacks a NUL
+// (e.g. an old-format entry from before this migration), dataType is "" and
+// the caller should fall through to DB to recover the type.
+func unpackCacheValue(v string) (dataType string, encryptedValue []byte) {
+	i := strings.IndexByte(v, '\x00')
+	if i < 0 {
+		return "", []byte(v)
+	}
+	return v[:i], []byte(v[i+1:])
 }
 
 // v4 cache keys are data-type-agnostic so detokenize can read without first
@@ -125,44 +148,73 @@ func (c *Cache) SetV4ByBlindIndex(ctx context.Context, blindIndex, fpt string) e
 	return c.set(ctx, v4BlindCacheKey(blindIndex), fpt)
 }
 
-// GetV4ByFPT returns the encrypted envelope bytes (as string) or "" on miss.
-func (c *Cache) GetV4ByFPT(ctx context.Context, fpt string) (string, error) {
+// GetV4ByFPT returns the cached (dataType, encrypted_value). Both empty on
+// miss. dataType empty + non-empty enc means an old-format entry; caller can
+// fall through to DB to recover the type.
+func (c *Cache) GetV4ByFPT(ctx context.Context, fpt string) (string, []byte, error) {
 	if c == nil || c.client == nil {
-		return "", nil
+		return "", nil, nil
 	}
-	return c.get(ctx, v4FptCacheKey(fpt))
+	v, err := c.get(ctx, v4FptCacheKey(fpt))
+	if err != nil || v == "" {
+		return "", nil, err
+	}
+	dt, enc := unpackCacheValue(v)
+	return dt, enc, nil
 }
 
-// SetV4ByFPT stores fpt -> encryptedValue.
-func (c *Cache) SetV4ByFPT(ctx context.Context, fpt string, encryptedValue []byte) error {
+// SetV4ByFPT stores fpt -> packed(dataType, encryptedValue).
+func (c *Cache) SetV4ByFPT(ctx context.Context, dataType, fpt string, encryptedValue []byte) error {
 	if c == nil || c.client == nil {
 		return nil
 	}
-	return c.set(ctx, v4FptCacheKey(fpt), string(encryptedValue))
+	return c.set(ctx, v4FptCacheKey(fpt), packCacheValue(dataType, encryptedValue))
 }
 
-// SetBlindAndFPT writes both v1 cache entries (blind→fpt and fpt→enc) in a
-// single Redis round-trip using the client pipeline. Equivalent to calling
-// SetByBlindIndex + SetByFPT but ~50% fewer network ops.
+// GetByFPT returns the cached (dataType, encrypted_value) for v1. The fpt key
+// is type-agnostic now (`pii:v1:fpt:<fpt>`); type is recovered from the value.
+func (c *Cache) GetByFPT(ctx context.Context, fpt string) (string, []byte, error) {
+	if c == nil || c.client == nil {
+		return "", nil, nil
+	}
+	v, err := c.get(ctx, fptCacheKey(fpt))
+	if err != nil || v == "" {
+		return "", nil, err
+	}
+	dt, enc := unpackCacheValue(v)
+	return dt, enc, nil
+}
+
+// SetByFPT stores fpt -> packed(dataType, encryptedValue) under the v1
+// type-agnostic FPT key.
+func (c *Cache) SetByFPT(ctx context.Context, dataType, fpt string, encryptedValue []byte) error {
+	if c == nil || c.client == nil {
+		return nil
+	}
+	return c.set(ctx, fptCacheKey(fpt), packCacheValue(dataType, encryptedValue))
+}
+
+// SetBlindAndFPT writes both v1 cache entries (blind→fpt and fpt→packed(type,enc))
+// in a single Redis round-trip via the client pipeline.
 func (c *Cache) SetBlindAndFPT(ctx context.Context, dataType, blindIndex, fpt string, encryptedValue []byte) error {
 	if c == nil || c.client == nil {
 		return nil
 	}
 	pipe := c.client.Pipeline()
 	pipe.Set(ctx, blindCacheKey(dataType, blindIndex), fpt, c.ttl)
-	pipe.Set(ctx, fptCacheKey(dataType, fpt), string(encryptedValue), c.ttl)
+	pipe.Set(ctx, fptCacheKey(fpt), packCacheValue(dataType, encryptedValue), c.ttl)
 	_, err := pipe.Exec(ctx)
 	return err
 }
 
 // SetV4BlindAndFPT — pipelined v4 equivalent of SetBlindAndFPT.
-func (c *Cache) SetV4BlindAndFPT(ctx context.Context, blindIndex, fpt string, encryptedValue []byte) error {
+func (c *Cache) SetV4BlindAndFPT(ctx context.Context, dataType, blindIndex, fpt string, encryptedValue []byte) error {
 	if c == nil || c.client == nil {
 		return nil
 	}
 	pipe := c.client.Pipeline()
 	pipe.Set(ctx, v4BlindCacheKey(blindIndex), fpt, c.ttl)
-	pipe.Set(ctx, v4FptCacheKey(fpt), string(encryptedValue), c.ttl)
+	pipe.Set(ctx, v4FptCacheKey(fpt), packCacheValue(dataType, encryptedValue), c.ttl)
 	_, err := pipe.Exec(ctx)
 	return err
 }
@@ -202,24 +254,6 @@ func (c *Cache) SetByBlindIndex(ctx context.Context, dataType, blindIndex, fpt s
 	}
 	k := blindCacheKey(dataType, blindIndex)
 	return c.set(ctx, k, fpt)
-}
-
-// GetByFPT returns encrypted_value (or empty string if not found).
-func (c *Cache) GetByFPT(ctx context.Context, dataType, fpt string) (string, error) {
-	if c == nil || c.client == nil {
-		return "", nil
-	}
-	k := fptCacheKey(dataType, fpt)
-	return c.get(ctx, k)
-}
-
-// SetByFPT sets fpt -> encrypted_value. Accepts encryptedValue as []byte.
-func (c *Cache) SetByFPT(ctx context.Context, dataType, fpt string, encryptedValue []byte) error {
-	if c == nil || c.client == nil {
-		return nil
-	}
-	k := fptCacheKey(dataType, fpt)
-	return c.set(ctx, k, string(encryptedValue))
 }
 
 // PreloadFromStore streams tokens directly from DB to Redis with pipelined sets using single client.
@@ -265,7 +299,7 @@ func (c *Cache) PreloadFromStore(ctx context.Context, store *models.Store) error
 		// Use SetNX to avoid overwriting keys that may already exist (optional behavior).
 		// If you want unconditional overwrite, use Set instead.
 		pipe.SetNX(opCtx, blindCacheKey(dataType, blindIndex), fpt, c.ttl)
-		pipe.SetNX(opCtx, fptCacheKey(dataType, fpt), string(encryptedValue), c.ttl)
+		pipe.SetNX(opCtx, fptCacheKey(fpt), packCacheValue(dataType, encryptedValue), c.ttl)
 
 		n++
 		batchCount++

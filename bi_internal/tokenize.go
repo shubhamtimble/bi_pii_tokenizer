@@ -19,7 +19,8 @@ type TokenizeRequest struct {
 }
 
 type TokenizeResponse struct {
-	FPT string `json:"fpt"`
+	FPT     string `json:"fpt"`
+	PIIType string `json:"pii_type"`
 }
 func isValidPAN(pan string) bool {
     pan = strings.ToUpper(strings.TrimSpace(pan))
@@ -93,7 +94,7 @@ func (s *Server) tokenizeHandler(w http.ResponseWriter, r *http.Request) {
 	// generation logic so a typo'd or malicious pii_type can't slip into the
 	// default base36 fallback path.
 	switch req.PIIType {
-	case "PAN", "AADHAR", "PHONE", "MOBILE", "EMAIL", "PASSPORT", "VOTERID":
+	case "PAN", "AADHAAR", "PHONE", "MOBILE", "EMAIL", "PASSPORT", "VOTERID":
 	default:
 		s.auditFail(ev, start, http.StatusBadRequest, "Invalid PII Type", w)
 		return
@@ -106,7 +107,7 @@ func (s *Server) tokenizeHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if req.PIIType == "AADHAR" {
+	if req.PIIType == "AADHAAR" {
 		if !isValidAADHAR(req.PIIValue) {
 			s.auditFail(ev, start, http.StatusBadRequest, fmt.Sprintf("Invalid %s Format", req.PIIType), w)
 			return
@@ -154,7 +155,10 @@ func (s *Server) tokenizeHandler(w http.ResponseWriter, r *http.Request) {
 
 	log.Println("API Call SuccessFul")
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(TokenizeResponse{FPT: fpt})
+	json.NewEncoder(w).Encode(TokenizeResponse{
+		FPT:     fpt,
+		PIIType: req.PIIType,
+	})
 
 }
 
