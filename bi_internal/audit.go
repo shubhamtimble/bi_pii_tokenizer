@@ -371,7 +371,8 @@ func (a *AuditLogger) rotateAndSync() {
 		log.Printf("audit sync: rotate failed (%v) — skipping this cycle", err)
 		return
 	}
-	if err := a.syncPendingToDB(); err != nil {
+	n, err := a.syncPendingToDB()
+	if err != nil {
 		log.Printf("audit sync: DB write failed (%v) — pending file retained for next cycle", err)
 		return
 	}
@@ -380,17 +381,22 @@ func (a *AuditLogger) rotateAndSync() {
 		log.Printf("audit sync: remove pending failed: %v", err)
 		return
 	}
-	log.Println("audit sync: complete, pending WAL cleared")
+	// Only announce completion when rows were actually synced. With a short
+	// sync interval an idle cycle (nothing pending) would otherwise log every
+	// tick forever.
+	if n > 0 {
+		log.Println("audit sync: complete, pending WAL cleared")
+	}
 }
 
-func (a *AuditLogger) syncPendingToDB() error {
+func (a *AuditLogger) syncPendingToDB() (int, error) {
 	pending := filepath.Join(a.dir, walPendingName)
 	f, err := os.Open(pending)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil
+			return 0, nil
 		}
-		return err
+		return 0, err
 	}
 	defer f.Close()
 
@@ -429,18 +435,22 @@ func (a *AuditLogger) syncPendingToDB() error {
 		batch = append(batch, ev)
 		if len(batch) >= a.batchSize {
 			if err := flush(); err != nil {
-				return err
+				return total, err
 			}
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("scan: %w", err)
+		return total, fmt.Errorf("scan: %w", err)
 	}
 	if err := flush(); err != nil {
-		return err
+		return total, err
 	}
-	log.Printf("audit sync: inserted %d rows (skipped %d malformed lines)", total, bad)
-	return nil
+	// Only log when something was actually synced; an idle cycle (0 rows) must
+	// stay silent or this fires every sync interval forever.
+	if total > 0 || bad > 0 {
+		log.Printf("audit sync: inserted %d rows (skipped %d malformed lines)", total, bad)
+	}
+	return total, nil
 }
 
 func (a *AuditLogger) insertBatch(ctx context.Context, evs []AuditEvent) error {
