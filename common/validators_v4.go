@@ -23,7 +23,11 @@ var (
 	reV4Aadhar   = regexp.MustCompile(`^[0-9]{12}$`)
 	reV4Mobile10 = regexp.MustCompile(`^[6-9][0-9]{9}$`)
 	reV4Email    = regexp.MustCompile(`^[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}$`)
-	reV4DL       = regexp.MustCompile(`^[A-Z0-9]{5,20}$`)
+	// Strict Indian DL form after separators are stripped: 2-letter state code +
+	// 2-digit RTO + 4-digit year + 7-digit serial = 2 letters followed by 13
+	// digits (15 chars). Tightened from the former loose ^[A-Z0-9]{5,20}$ so the
+	// shape no longer overlaps PAN/VOTERID/etc.
+	reV4DL       = regexp.MustCompile(`^[A-Z]{2}[0-9]{13}$`)
 	reV4Passport = regexp.MustCompile(`^[A-Z][0-9]{7}$`)
 	reV4VoterID  = regexp.MustCompile(`^[A-Z]{3}[0-9]{7}$`)
 

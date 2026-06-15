@@ -18,6 +18,7 @@ type AuditEventRecord struct {
 	OccurredAt string  `json:"occurred_at"`
 	Action     string  `json:"action"`
 	Actor      *string `json:"actor"`
+	RoleCode   *string `json:"role_code"`
 	PIIType    *string `json:"pii_type"`
 	FPT        *string `json:"fpt"`
 	ValueHash  *string `json:"value_hash"`
@@ -83,6 +84,9 @@ func (s *Server) auditEventsHandler(w http.ResponseWriter, r *http.Request) {
 	if v := q.Get("actor"); v != "" {
 		conds = append(conds, "actor = "+addArg(v))
 	}
+	if v := q.Get("role_code"); v != "" {
+		conds = append(conds, "role_code = "+addArg(v))
+	}
 	if v := q.Get("pii_type"); v != "" {
 		conds = append(conds, "pii_type = "+addArg(strings.ToUpper(v)))
 	}
@@ -105,7 +109,7 @@ func (s *Server) auditEventsHandler(w http.ResponseWriter, r *http.Request) {
 	// We SELECT both `id` (internal monotonic cursor) and `event_id` (public
 	// UUID returned to clients). Pagination still walks newest-first by `id`.
 	sqlStr := `SELECT id, event_id, occurred_at, action, actor, pii_type, fpt,
-                       value_hash, reason, decision, ip, latency_ms
+                       value_hash, reason, decision, ip, latency_ms, role_code
                 FROM pii_audit_logs`
 	if len(conds) > 0 {
 		sqlStr += " WHERE " + strings.Join(conds, " AND ")
@@ -137,9 +141,10 @@ func (s *Server) auditEventsHandler(w http.ResponseWriter, r *http.Request) {
 			decision   string
 			ip         sql.NullString
 			latencyMS  sql.NullInt64
+			roleCode   sql.NullString
 		)
 		if err := rows.Scan(&id, &eventID, &occurredAt, &action, &actor, &piiType, &fpt,
-			&valueHash, &reason, &decision, &ip, &latencyMS); err != nil {
+			&valueHash, &reason, &decision, &ip, &latencyMS, &roleCode); err != nil {
 			writeJSONError(w, http.StatusInternalServerError, "scan failed")
 			return
 		}
@@ -153,6 +158,7 @@ func (s *Server) auditEventsHandler(w http.ResponseWriter, r *http.Request) {
 			OccurredAt: occurredAt.UTC().Format(time.RFC3339Nano),
 			Action:     action,
 			Actor:      nullStrPtr(actor),
+			RoleCode:   nullStrPtr(roleCode),
 			PIIType:    nullStrPtr(piiType),
 			FPT:        nullStrPtr(fpt),
 			ValueHash:  nullStrPtr(valueHash),

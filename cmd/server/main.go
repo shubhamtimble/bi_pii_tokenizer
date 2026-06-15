@@ -96,7 +96,7 @@ func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE")
-		w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, Authorization, X-API-Key")
+		w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, Authorization, X-API-Key, X-Role-Code")
 		
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)
@@ -135,6 +135,10 @@ func main() {
 		"migrations/002_create_pii_audit_logs.sql",
 		"migrations/003_audit_log_v2.sql",
 		"migrations/004_audit_event_id_uuid.sql",
+		"migrations/005_create_rbac_permission_tables.sql",
+		"migrations/006_audit_role_code.sql",
+		"migrations/007_relax_validity_period.sql",
+		"migrations/008_pii_mask_char.sql",
 	); err != nil {
 		log.Fatalf("migration failed: %v", err)
 	}

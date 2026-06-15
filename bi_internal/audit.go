@@ -25,6 +25,7 @@ type AuditEvent struct {
 	OccurredAt time.Time `json:"occurred_at"`
 	RequestID  string    `json:"req_id,omitempty"`
 	Actor      string    `json:"actor,omitempty"`      // user id; nil/"" for tokenize
+	RoleCode   string    `json:"role_code,omitempty"`  // RBAC role; set only when permission check is on
 	Reason     string    `json:"reason,omitempty"`     // purpose code; nil/"" for tokenize
 	Action     string    `json:"action"`               // tokenize | detokenize | *.failed
 	Decision   string    `json:"decision"`             // success | failure | denied
@@ -461,6 +462,7 @@ func (a *AuditLogger) insertBatch(ctx context.Context, evs []AuditEvent) error {
 	stmt, err := tx.PrepareContext(ctx, pq.CopyIn("pii_audit_logs",
 		"occurred_at", "req_id", "actor", "reason", "action", "decision",
 		"version", "pii_type", "fpt", "value_hash", "latency_ms", "error", "ip",
+		"role_code",
 	))
 	if err != nil {
 		_ = tx.Rollback()
@@ -481,6 +483,7 @@ func (a *AuditLogger) insertBatch(ctx context.Context, evs []AuditEvent) error {
 			ev.LatencyMS,
 			nullIfEmpty(ev.Error),
 			nullIfEmpty(ev.IP),
+			nullIfEmpty(ev.RoleCode),
 		); err != nil {
 			_ = stmt.Close()
 			_ = tx.Rollback()

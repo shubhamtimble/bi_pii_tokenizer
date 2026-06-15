@@ -63,6 +63,26 @@ func (s *Server) tokenizeV4Handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// RBAC PII-level gate (no-op when permission check disabled).
+	if s.rbac != nil && s.rbac.enabled {
+		role := roleFromContext(r.Context())
+		ev.RoleCode = role
+		allowed, expired, perr := s.rbac.CanTokenize(r.Context(), role, ev.PIIType)
+		if perr != nil {
+			log.Printf("rbac tokenize_v4 check error: %v", perr)
+			s.auditFail(ev, start, http.StatusInternalServerError, "internal error", w)
+			return
+		}
+		if expired {
+			s.auditDeny(ev, start, http.StatusForbidden, "expired", "permission expired", w)
+			return
+		}
+		if !allowed {
+			s.auditDeny(ev, start, http.StatusForbidden, "denied", "not permitted", w)
+			return
+		}
+	}
+
 	fpt, err := s.TokenizeV4(r.Context(), ev.PIIType, normalized)
 	if err != nil {
 		log.Printf("tokenize_v4 error: %v", err)

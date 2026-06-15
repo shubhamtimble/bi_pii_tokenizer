@@ -47,6 +47,12 @@ func (s *Server) detokenizeV4Handler(w http.ResponseWriter, r *http.Request) {
 	}
 	ev.FPT = fpt
 
+	// RBAC-enabled path fully owns the response (shared with v1 — unified vault).
+	if s.rbac != nil && s.rbac.enabled {
+		s.detokenizeWithRBAC(w, r, ev, start, fpt)
+		return
+	}
+
 	plain, dataType, err := s.DetokenizeV4(r.Context(), fpt)
 	if err != nil {
 		if err == ErrTokenNotFound {

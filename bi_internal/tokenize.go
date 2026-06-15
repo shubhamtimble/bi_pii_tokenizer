@@ -142,6 +142,27 @@ func (s *Server) tokenizeHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// RBAC PII-level gate (no-op when permission check disabled). Endpoint-level
+	// TOKENIZE permission was already enforced by requireEndpoint.
+	if s.rbac != nil && s.rbac.enabled {
+		role := roleFromContext(r.Context())
+		ev.RoleCode = role
+		allowed, expired, perr := s.rbac.CanTokenize(r.Context(), role, req.PIIType)
+		if perr != nil {
+			log.Printf("rbac tokenize check error: %v", perr)
+			s.auditFail(ev, start, http.StatusInternalServerError, "internal error", w)
+			return
+		}
+		if expired {
+			s.auditDeny(ev, start, http.StatusForbidden, "expired", "permission expired", w)
+			return
+		}
+		if !allowed {
+			s.auditDeny(ev, start, http.StatusForbidden, "denied", "not permitted", w)
+			return
+		}
+	}
+
 	fpt, err := s.Tokenize(r.Context(), req.PIIType, req.PIIValue)
 	if err != nil {
 		log.Printf("tokenize error: %v", err)

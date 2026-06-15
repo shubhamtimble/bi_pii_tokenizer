@@ -25,6 +25,7 @@ type Server struct {
 	cache   *Cache
 	ff1Gen  *common.FF1GeneratorV4
 	audit   *AuditLogger
+	rbac    *RBAC
 }
 
 // NewServer creates a server and initializes keys + redis cluster cache.
@@ -73,6 +74,11 @@ func NewServer(store *models.Store) *Server {
 
 	s.audit = NewAuditLoggerFromEnv(store.DB())
 
+	// RBAC permission layer. Always constructed; a no-op unless
+	// PERMISSION_CHECK_ENABLED is true. Loads its own in-memory permission cache
+	// (separate from the Redis token cache) and refreshes it periodically.
+	s.rbac = NewRBACFromEnv(store.DB())
+
 	// init redis cache. Preload runs in the background so the HTTP listener
 	// comes up immediately; the first few requests after startup may miss
 	// cache and go straight to DB (the normal cache-miss path).
@@ -101,14 +107,29 @@ func HealthHandler(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) routes() {
 	sr := s.r.PathPrefix("/api/fpt-tokenization").Subrouter()
-	sr.HandleFunc("/tokenize", s.tokenizeHandler).Methods("POST")
-	sr.HandleFunc("/detokenize", s.detokenizeHandler).Methods("POST")
-	sr.HandleFunc("/bulk-tokenize", s.bulkTokenizeHandler).Methods("POST")
-	sr.HandleFunc("/v4/tokenize", s.tokenizeV4Handler).Methods("POST")
-	sr.HandleFunc("/v4/detokenize", s.detokenizeV4Handler).Methods("POST")
-	sr.HandleFunc("/audit/events", s.auditEventsHandler).Methods(http.MethodGet)
-	// health
+
+	// Protected endpoints — wrapped with the RBAC endpoint gate (pass-through
+	// when PERMISSION_CHECK_ENABLED is false).
+	sr.Handle("/tokenize", s.requireEndpoint(ActionTokenize, http.HandlerFunc(s.tokenizeHandler))).Methods(http.MethodPost)
+	sr.Handle("/detokenize", s.requireEndpoint(ActionDetokenize, http.HandlerFunc(s.detokenizeHandler))).Methods(http.MethodPost)
+	sr.Handle("/v4/tokenize", s.requireEndpoint(ActionTokenize, http.HandlerFunc(s.tokenizeV4Handler))).Methods(http.MethodPost)
+	sr.Handle("/v4/detokenize", s.requireEndpoint(ActionDetokenize, http.HandlerFunc(s.detokenizeV4Handler))).Methods(http.MethodPost)
+	sr.Handle("/audit/events", s.requireEndpoint(ActionAuditRead, http.HandlerFunc(s.auditEventsHandler))).Methods(http.MethodGet)
+
+	// health — intentionally unguarded by RBAC (still behind the global X-API-Key)
 	sr.HandleFunc("/health", HealthHandler).Methods(http.MethodGet)
+
+	// Admin permission-management APIs.
+	sr.Handle("/admin/roles", s.requireEndpoint(ActionRoleManage, http.HandlerFunc(s.adminCreateRoleHandler))).Methods(http.MethodPost)
+	sr.Handle("/admin/roles", s.requireEndpoint(ActionRoleManage, http.HandlerFunc(s.adminListRolesHandler))).Methods(http.MethodGet)
+	sr.Handle("/admin/roles/{role_code}", s.requireEndpoint(ActionRoleManage, http.HandlerFunc(s.adminUpdateRoleHandler))).Methods(http.MethodPut)
+	sr.Handle("/admin/roles/{role_code}/endpoint-permissions", s.requireEndpoint(ActionPermissionManage, http.HandlerFunc(s.adminGetEndpointPermsHandler))).Methods(http.MethodGet)
+	sr.Handle("/admin/roles/{role_code}/endpoint-permissions", s.requireEndpoint(ActionPermissionManage, http.HandlerFunc(s.adminPutEndpointPermsHandler))).Methods(http.MethodPut)
+	sr.Handle("/admin/roles/{role_code}/pii-permissions", s.requireEndpoint(ActionPermissionManage, http.HandlerFunc(s.adminGetPIIPermsHandler))).Methods(http.MethodGet)
+	sr.Handle("/admin/roles/{role_code}/pii-permissions", s.requireEndpoint(ActionPermissionManage, http.HandlerFunc(s.adminPutPIIPermsHandler))).Methods(http.MethodPut)
+	sr.Handle("/admin/permissions/reload-cache", s.requireEndpoint(ActionPermissionManage, http.HandlerFunc(s.adminReloadCacheHandler))).Methods(http.MethodPost)
+	sr.Handle("/admin/overview", s.requireEndpoint(ActionPermissionManage, http.HandlerFunc(s.adminOverviewHandler))).Methods(http.MethodGet)
+	sr.Handle("/admin/permission-audit", s.requireEndpoint(ActionPermissionManage, http.HandlerFunc(s.adminPermissionAuditHandler))).Methods(http.MethodGet)
 }
 
 func (s *Server) Router() http.Handler {

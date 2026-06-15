@@ -102,7 +102,11 @@ func TestNormalizeAndValidateV4_DL(t *testing.T) {
 		{"MH1420200001234", "MH1420200001234", true},
 		{"MH-14-20200001234", "MH1420200001234", true},
 		{"mh 14 20200001234", "MH1420200001234", true},
-		{"AB12", "", false}, // too short
+		{"AB12", "", false},               // too short
+		{"ABCDE1234F", "", false},         // PAN-shaped — strict DL must reject
+		{"MH142020000123", "", false},     // 14 chars (12 digits) — too short
+		{"MH14202000012345", "", false},   // 16 chars (14 digits) — too long
+		{"M123456789012345", "", false},   // 1 letter prefix — needs 2
 	}
 	for _, c := range cases {
 		got, err := NormalizeAndValidateV4(PIITypeDL, c.in)
