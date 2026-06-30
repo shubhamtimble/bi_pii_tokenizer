@@ -19,6 +19,7 @@ import (
 var canonicalPIITypes = map[string]bool{
 	"PAN": true, "AADHAAR": true, "MOBILE": true, "PHONE": true,
 	"EMAIL": true, "DL": true, "PASSPORT": true, "VOTERID": true,
+	"DATE_OF_BIRTH": true,
 }
 
 var canonicalEndpointActions = map[string]bool{

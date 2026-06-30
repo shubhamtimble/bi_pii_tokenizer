@@ -51,7 +51,8 @@ func (s *Server) tokenizeV4Handler(w http.ResponseWriter, r *http.Request) {
 	case common.PIITypePAN, common.PIITypeAADHAR,
 		common.PIITypeMobile, common.PIITypePhone,
 		common.PIITypeEmail, common.PIITypeDL,
-		common.PIITypePassport, common.PIITypeVoterID:
+		common.PIITypePassport, common.PIITypeVoterID,
+		common.PIITypeDateOfBirth:
 	default:
 		s.auditFail(ev, start, http.StatusBadRequest, "Invalid PII Type", w)
 		return
@@ -185,6 +186,8 @@ func (s *Server) generateV4FPT(piiType, normalized string, tweak []byte) (string
 		return s.ff1Gen.TokenizePassport(normalized, tweak)
 	case common.PIITypeVoterID:
 		return s.ff1Gen.TokenizeVoterID(normalized, tweak)
+	case common.PIITypeDateOfBirth:
+		return s.ff1Gen.TokenizeDateOfBirth(normalized, tweak)
 	}
 	return "", fmt.Errorf("unsupported pii_type: %s", piiType)
 }

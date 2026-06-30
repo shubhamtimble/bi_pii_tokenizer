@@ -27,6 +27,9 @@ func Normalize(piiType, value string) string {
 	case "DL":
 		v := strings.ToUpper(strings.TrimSpace(value))
 		return regexp.MustCompile(`[\s\-]`).ReplaceAllString(v, "")
+	case "DATE_OF_BIRTH":
+		// already canonical YYYY-MM-DD; just trim
+		return strings.TrimSpace(value)
 	default:
 		return strings.TrimSpace(value)
 	}

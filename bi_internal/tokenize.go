@@ -73,6 +73,14 @@ func isValidVoterID(raw string) bool {
     return reVoterIDLegacy.MatchString(strings.ToUpper(strings.TrimSpace(raw)))
 }
 
+// isValidDOB enforces the strict YYYY-MM-DD contract (real calendar date within
+// the supported range) via the shared validator, keeping the legacy path
+// consistent with v4.
+func isValidDOB(raw string) bool {
+    _, err := common.ValidateDOB(raw)
+    return err == nil
+}
+
 func (s *Server) tokenizeHandler(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	ev := AuditEvent{Action: "tokenize", Version: "v1", IP: clientIP(r)}
@@ -94,7 +102,7 @@ func (s *Server) tokenizeHandler(w http.ResponseWriter, r *http.Request) {
 	// generation logic so a typo'd or malicious pii_type can't slip into the
 	// default base36 fallback path.
 	switch req.PIIType {
-	case "PAN", "AADHAAR", "PHONE", "MOBILE", "EMAIL", "PASSPORT", "VOTERID":
+	case "PAN", "AADHAAR", "PHONE", "MOBILE", "EMAIL", "PASSPORT", "VOTERID", "DATE_OF_BIRTH":
 	default:
 		s.auditFail(ev, start, http.StatusBadRequest, "Invalid PII Type", w)
 		return
@@ -137,6 +145,13 @@ func (s *Server) tokenizeHandler(w http.ResponseWriter, r *http.Request) {
 
 	if req.PIIType == "VOTERID" {
 		if !isValidVoterID(req.PIIValue) {
+			s.auditFail(ev, start, http.StatusBadRequest, fmt.Sprintf("Invalid %s Format", req.PIIType), w)
+			return
+		}
+	}
+
+	if req.PIIType == "DATE_OF_BIRTH" {
+		if !isValidDOB(req.PIIValue) {
 			s.auditFail(ev, start, http.StatusBadRequest, fmt.Sprintf("Invalid %s Format", req.PIIType), w)
 			return
 		}
@@ -198,6 +213,9 @@ func (s *Server) Tokenize(ctx context.Context, dataType, value string) (string, 
 		normalized = strings.ToUpper(strings.TrimSpace(value))
 	case "PHONE", "MOBILE":
 		normalized = normalizeLegacyPhone(value)
+	case "DATE_OF_BIRTH":
+		// already canonical YYYY-MM-DD; just trim
+		normalized = strings.TrimSpace(value)
 	default:
 		normalized = strings.TrimSpace(value)
 	}
@@ -223,8 +241,13 @@ func (s *Server) Tokenize(ctx context.Context, dataType, value string) (string, 
 		return found.FPT, nil
 	}
 
-	// 3) Not found -> allocate deterministically with retries
-	const maxAttempts = 1000
+	// 3) Not found -> allocate deterministically with retries.
+	// DATE_OF_BIRTH draws from a tiny, deterministic domain (~73k valid dates),
+	// so it gets an enlarged retry budget; all other types keep the default.
+	maxAttempts := 1000
+	if strings.ToUpper(strings.TrimSpace(dataType)) == "DATE_OF_BIRTH" {
+		maxAttempts = 10000
+	}
 	for counter := 0; counter < maxAttempts; counter++ {
 		candidate, ferr := common.FPTFromBlindIndexWithCounter(blind, normalized, dataType, counter)
 		if ferr != nil {

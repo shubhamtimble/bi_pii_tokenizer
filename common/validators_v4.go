@@ -16,6 +16,8 @@ const (
 	PIITypeDL       = "DL"
 	PIITypePassport = "PASSPORT"
 	PIITypeVoterID  = "VOTERID" // Indian EPIC: 3 letters + 7 digits
+
+	PIITypeDateOfBirth = "DATE_OF_BIRTH" // strict YYYY-MM-DD, format-preserving to another valid date
 )
 
 var (
@@ -93,6 +95,10 @@ func NormalizeAndValidateV4(piiType, value string) (string, error) {
 			return "", errors.New("invalid voter id format (expected 3 letters + 7 digits)")
 		}
 		return v, nil
+
+	case PIITypeDateOfBirth:
+		// strict YYYY-MM-DD, real calendar date, within supported range
+		return ValidateDOB(v)
 
 	default:
 		return "", errors.New("unsupported pii_type")

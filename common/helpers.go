@@ -126,9 +126,24 @@ func FPTFromBlindIndexWithCounter(blindHex, original, dataType string, counter i
 		return fptVoterIDFromBlind(blindHex, counter)
 	case "EMAIL":
 		return fptEmailFromBlind(blindHex, original, counter)
+	case "DATE_OF_BIRTH":
+		return fptDateFromBlind(blindHex, counter)
 	default:
 		return deterministicBase36FromHexWithCounter(blindHex, len(original), counter)
 	}
+}
+
+// fptDateFromBlind produces a deterministic, valid calendar date (YYYY-MM-DD)
+// within the supported DOB range, derived from the blind index + counter. The
+// SHA-derived integer is reduced modulo the date-domain size to an ordinal and
+// decoded back through calendar arithmetic, so the output is always a real date.
+// The caller's retry loop bumps counter on FPT collision (DOB uses an enlarged
+// budget because its domain — ~73k dates — is small relative to other types).
+func fptDateFromBlind(blindHex string, counter int) (string, error) {
+	src := sha256.Sum256([]byte(blindHex + ":" + fmt.Sprint(counter)))
+	n := new(big.Int).SetBytes(src[:])
+	ord := int(new(big.Int).Mod(n, big.NewInt(int64(dobDomainSize()))).Int64())
+	return ordinalToDOB(ord), nil
 }
 
 func fptPANFromBlind(blindHex string, counter int) (string, error) {

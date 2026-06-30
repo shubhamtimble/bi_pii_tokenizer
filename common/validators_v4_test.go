@@ -167,6 +167,36 @@ func TestNormalizeAndValidateV4_VoterID(t *testing.T) {
 	}
 }
 
+func TestNormalizeAndValidateV4_DOB(t *testing.T) {
+	cases := []struct {
+		in, want string
+		ok       bool
+	}{
+		{"2000-12-20", "2000-12-20", true},
+		{"1998-01-05", "1998-01-05", true},
+		{"1975-09-30", "1975-09-30", true},
+		{"  2000-12-20 ", "2000-12-20", true}, // trimmed
+		{"20-12-2000", "", false},             // wrong order/shape
+		{"2000/12/20", "", false},             // wrong separator
+		{"2000-13-20", "", false},             // month out of range
+		{"2000-02-31", "", false},             // day not valid for month
+		{"2000-2-3", "", false},               // not zero-padded
+		{"abc", "", false},
+		{"", "", false},
+		{"1899-12-31", "", false}, // before supported range
+		{"2100-01-01", "", false}, // at/after exclusive upper bound
+	}
+	for _, c := range cases {
+		got, err := NormalizeAndValidateV4(PIITypeDateOfBirth, c.in)
+		if (err == nil) != c.ok {
+			t.Errorf("DOB %q: ok=%v want=%v err=%v", c.in, err == nil, c.ok, err)
+		}
+		if c.ok && got != c.want {
+			t.Errorf("DOB %q: got=%q want=%q", c.in, got, c.want)
+		}
+	}
+}
+
 func TestNormalizeAndValidateV4_UnknownType(t *testing.T) {
 	if _, err := NormalizeAndValidateV4("DNA", "whatever"); err == nil {
 		t.Fatal("expected error for unsupported type")

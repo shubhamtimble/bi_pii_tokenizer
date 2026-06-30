@@ -5,7 +5,8 @@
 -- migration is safe to (re)apply against existing client infra.
 --
 -- pii_type values use the canonical codes the code already stores in
--- pii_tokens.data_type: PAN, AADHAAR, MOBILE, PHONE, EMAIL, DL, PASSPORT, VOTERID.
+-- pii_tokens.data_type: PAN, AADHAAR, MOBILE, PHONE, EMAIL, DL, PASSPORT,
+-- VOTERID, DATE_OF_BIRTH.
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
@@ -94,6 +95,7 @@ INSERT INTO role_pii_permissions (role_id, pii_type, can_tokenize, detokenize_ac
 SELECT r.id, t.pii_type, TRUE, 'FULL', 'FOREVER', NULL
 FROM roles r
 CROSS JOIN (VALUES ('PAN'), ('AADHAAR'), ('MOBILE'), ('PHONE'),
-                   ('EMAIL'), ('DL'), ('PASSPORT'), ('VOTERID')) AS t(pii_type)
+                   ('EMAIL'), ('DL'), ('PASSPORT'), ('VOTERID'),
+                   ('DATE_OF_BIRTH')) AS t(pii_type)
 WHERE r.role_code = 'SUPER_ADMIN'
 ON CONFLICT (role_id, pii_type) DO NOTHING;

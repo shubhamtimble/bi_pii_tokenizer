@@ -21,6 +21,8 @@ func TestMaskPII(t *testing.T) {
 		{"PASSPORT", "A1234567", "X", "XXXXX567"},
 		{"DL", "MH1420200001234", "*", "***********1234"},
 		{"VOTERID", "ABC1234567", "X", "XXXXXXX567"},
+		{"DATE_OF_BIRTH", "2000-12-20", "X", "XXXX-XX-XX"},
+		{"DATE_OF_BIRTH", "2000-12-20", "*", "****-**-**"},
 		{"UNKNOWN", "whatever", "X", "XXXX"},
 		{"UNKNOWN", "whatever", "*", "****"},
 		{"pan", "ABCDE1234F", "X", "XXXXX1234F"}, // case-insensitive type

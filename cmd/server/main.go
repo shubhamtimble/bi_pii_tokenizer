@@ -139,6 +139,7 @@ func main() {
 		"migrations/006_audit_role_code.sql",
 		"migrations/007_relax_validity_period.sql",
 		"migrations/008_pii_mask_char.sql",
+		"migrations/009_seed_dob_pii_permission.sql",
 	); err != nil {
 		log.Fatalf("migration failed: %v", err)
 	}

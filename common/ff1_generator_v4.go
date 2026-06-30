@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	ff1lib "github.com/capitalone/fpe/ff1"
 )
@@ -395,4 +396,31 @@ func (g *FF1GeneratorV4) tokenizeEmailChunk(s string, tweak []byte) (string, err
 		out[p] = ct[i]
 	}
 	return string(out), nil
+}
+
+// TokenizeDateOfBirth produces a format-preserving token for a YYYY-MM-DD date.
+// The date is encoded as an ordinal day-count within the supported range, the
+// ordinal is FF1-encrypted as a radix-10 block, and a cycle walk re-encrypts
+// while the result falls outside the date domain. The accepted ordinal is then
+// decoded back through calendar arithmetic, so the token is ALWAYS a real date
+// in YYYY-MM-DD form whose year may differ from the input (so age cannot be
+// inferred from the token). Reversal is via the stored ciphertext, not this map.
+func (g *FF1GeneratorV4) TokenizeDateOfBirth(normalized string, tweak []byte) (string, error) {
+	t, err := time.Parse(dobLayout, normalized)
+	if err != nil {
+		return "", fmt.Errorf("invalid DOB for tokenization: %w", err)
+	}
+	tw := deriveSegmentTweak(tweak, "dob")
+	s := dobEncodeOrdinal(dobToOrdinal(t))
+	for iter := 0; iter < cycleWalkMaxIter; iter++ {
+		ct, err := g.encryptDigits(s, tw)
+		if err != nil {
+			return "", err
+		}
+		if dateStr, ok := dobDecodeInRange(ct); ok {
+			return dateStr, nil
+		}
+		s = ct
+	}
+	return "", fmt.Errorf("dob cycle walk exhausted")
 }

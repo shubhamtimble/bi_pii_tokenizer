@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"regexp"
 	"testing"
+	"time"
 )
 
 func newTestGen(t *testing.T) *FF1GeneratorV4 {
@@ -182,6 +183,41 @@ func TestFF1_VoterID_FormatPreserved(t *testing.T) {
 	ct2, _ := g.TokenizeVoterID("ABC1234567", tw)
 	if ct != ct2 {
 		t.Fatalf("VOTERID not deterministic: %q vs %q", ct, ct2)
+	}
+}
+
+func TestFF1_DateOfBirth_FormatPreserved(t *testing.T) {
+	g := newTestGen(t)
+	tw := mustTweak(t)
+	dobRE := regexp.MustCompile(`^[0-9]{4}-[0-9]{2}-[0-9]{2}$`)
+
+	for _, in := range []string{"2000-12-20", "1998-01-05", "1975-09-30", "1900-01-01", "2099-12-31"} {
+		ct, err := g.TokenizeDateOfBirth(in, tw)
+		if err != nil {
+			t.Fatalf("TokenizeDateOfBirth(%q): %v", in, err)
+		}
+		if !dobRE.MatchString(ct) {
+			t.Fatalf("DOB token %q violates YYYY-MM-DD", ct)
+		}
+		// token must be a real calendar date within the supported range
+		parsed, perr := time.Parse("2006-01-02", ct)
+		if perr != nil {
+			t.Fatalf("DOB token %q is not a real date: %v", ct, perr)
+		}
+		if parsed.Year() < 1900 || parsed.Year() > 2099 {
+			t.Fatalf("DOB token %q out of supported range", ct)
+		}
+		// deterministic for same input + tweak
+		if ct2, _ := g.TokenizeDateOfBirth(in, tw); ct != ct2 {
+			t.Fatalf("DOB not deterministic: %q vs %q", ct, ct2)
+		}
+	}
+
+	// FF1 is a bijection for a fixed tweak, so distinct dates must map to distinct tokens.
+	a, _ := g.TokenizeDateOfBirth("2000-12-20", tw)
+	b, _ := g.TokenizeDateOfBirth("2000-12-21", tw)
+	if a == b {
+		t.Fatalf("distinct DOBs produced same token: %q", a)
 	}
 }
 
